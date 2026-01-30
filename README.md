@@ -1,4 +1,4 @@
-# Mechanistic Interpretability for Steering Vision‑Language‑Action Models [CoRL 2025] 
+# [CoRL 2025] Mechanistic Interpretability for Steering Vision‑Language‑Action Models 
 <p align="center">
   <a href="https://arxiv.org/pdf/2509.00328" target="_blank">
     <img alt="Paper" src="https://img.shields.io/badge/Paper-arXiv%3A2509.00328-B31B1B?style=for-the-badge">
