@@ -1,6 +1,23 @@
 # Mechanistic Interpretability for Steering Vision‑Language‑Action Models
-CoRL 2025  
-[Paper (arXiv:2509.00328)](https://arxiv.org/pdf/2509.00328) · [Project Site](https://vla-mech-interp.github.io)
+<p align="center">
+  <a href="https://arxiv.org/pdf/2509.00328" target="_blank">
+    <img alt="Paper" src="https://img.shields.io/badge/Paper-arXiv%3A2509.00328-B31B1B?style=for-the-badge">
+  </a>
+  <a href="https://vla-mech-interp.github.io" target="_blank">
+    <img alt="Project Site" src="https://img.shields.io/badge/Project-Site-2EA44F?style=for-the-badge">
+  </a>
+  <a href="https://openreview.net/forum?id=YvsUD8C9QS" target="_blank">
+    <img alt="OpenReview" src="https://img.shields.io/badge/OpenReview-CoRL%202025-5B21B6?style=for-the-badge">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://bear-haon.github.io" target="_blank">Bear Häon*</a> &nbsp;&nbsp;
+  <a href="https://scholar.google.com/citations?user=nkXU7rIAAAAJ&hl=en" target="_blank">Kaylene Stocking*</a> &nbsp;&nbsp;
+  <a href="https://ian-chuang.github.io" target="_blank">Ian Chuang</a> &nbsp;&nbsp;
+  <a href="https://www2.eecs.berkeley.edu/Faculty/Homepages/tomlin.html" target="_blank">Claire Tomlin</a>
+</p>
+<p align="center"><sub>* Equal contribution</sub></p>
 
 We introduce an activation‑level interface for controlling Vision‑Language‑Action (VLA) policies without fine‑tuning, reward signals, or environment interaction. By interpreting FFN value vectors as vocabulary‑aligned directions, we identify causal semantic mechanisms (e.g., *slow*, *up*, *careful*) and steer real‑time robot behavior across OpenVLA (LIBERO) and π₀‑FAST.
 
