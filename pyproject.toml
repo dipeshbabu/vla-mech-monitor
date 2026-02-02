@@ -1,0 +1,36 @@
+[project]
+name = "vla-mech-monitor"
+version = "0.1.0"
+description = "Mechanistic failure monitors and closed-loop activation steering for VLA policies (OpenVLA, pi0) on LIBERO."
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "torch>=2.2",
+  "tqdm>=4.66",
+  "pydantic>=2.5",
+  "pyyaml>=6.0",
+  "scikit-learn>=1.4",
+  "matplotlib>=3.8",
+  "pillow>=10.0",
+  "transformers>=4.45",
+  "accelerate>=0.34",
+  "timm==0.9.10",
+]
+
+[project.optional-dependencies]
+# You may install one of these depending on your LIBERO setup.
+lerobot = ["lerobot>=0.1.0"]  # if you use HF LeRobot
+libero = []                  # original LIBERO installs vary; see README
+
+[project.scripts]
+vmm = "vla_mech_monitor.cli:main"
+
+[tool.ruff]
+line-length = 100
+select = ["E","F","I","B","UP","SIM"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true

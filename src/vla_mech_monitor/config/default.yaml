@@ -1,0 +1,61 @@
+seed: 42
+device: "cuda"
+out_dir: "results/run_001"
+
+env:
+  name: "libero"
+  task_suite: "libero_10" # start small
+  num_envs: 4
+  max_steps: 250
+
+policy:
+  name: "openvla"
+  precision: "bf16" # "fp16" also ok
+  checkpoint: "OPENVLA_CHECKPOINT_PATH"
+
+logging:
+  save_trajectories: true
+  save_activations: true
+  activation_sites:
+    # You will map these to actual module names once wired to OpenVLA
+    - { layer: 18, kind: "mlp_out", token: "policy" }
+    - { layer: 22, kind: "mlp_out", token: "policy" }
+  activation_stride: 1 # log every step; set 2/4 to reduce size
+  compress: true
+
+nearmiss:
+  enabled: true
+  perturbations:
+    - "instr_left_right_flip"
+    - "vision_occlusion"
+    - "action_noise"
+  vision_occlusion:
+    patch_size: 32
+    severity: 0.25
+  action_noise:
+    sigma: 0.01
+  failure_within_k: 15 # monitor target horizon
+
+monitor:
+  type: "directions" # or "probe"
+  sites_agg: "mean"
+  probe:
+    hidden: 256
+    dropout: 0.1
+    lr: 1e-3
+    epochs: 10
+
+steering:
+  enabled: true
+  alpha: 0.8
+  threshold_tau: 1.5
+  consec: 2
+  intervene_steps: 6
+  cooldown_steps: 10
+
+eval:
+  num_episodes_clean: 200
+  num_episodes_perturbed: 200
+  threshold_sweep:
+    taus: [1.0, 1.25, 1.5, 1.75, 2.0]
+    alphas: [0.2, 0.5, 0.8, 1.0]

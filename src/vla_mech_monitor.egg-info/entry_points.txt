@@ -1,0 +1,2 @@
+[console_scripts]
+vmm = vla_mech_monitor.cli:main
