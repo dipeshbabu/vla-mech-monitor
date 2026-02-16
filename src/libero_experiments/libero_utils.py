@@ -42,10 +42,20 @@ def get_libero_image(obs: dict, resize_size: int | Tuple[int, int]) -> np.ndarra
     return resize_image(img, resize_size)
 
 
-def save_rollout_video(rollout_images, idx: int, success: bool, task_description: str, out_dir: str, log_file=None):
+def save_rollout_video(
+    rollout_images,
+    idx: int,
+    success: bool,
+    task_description: str,
+    out_dir: str,
+    log_file=None,
+    is_near_miss: bool = False,
+):
     os.makedirs(out_dir, exist_ok=True)
     processed = task_description.lower().replace(" ", "_").replace("\n", "_").replace(".", "_")[:50]
-    mp4_path = f"{out_dir}/{DATE_TIME}--episode={idx}--success={success}--task={processed}.mp4"
+    mp4_path = (
+        f"{out_dir}/{DATE_TIME}--episode={idx}--success={success}--nearmiss={is_near_miss}--task={processed}.mp4"
+    )
     writer = imageio.get_writer(mp4_path, fps=30)
     for img in rollout_images:
         writer.append_data(img)

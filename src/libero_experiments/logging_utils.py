@@ -40,6 +40,58 @@ def append_csv_row(csv_path: str, task_description: str, success_rate: float):
         writer.writerow([task_description, success_rate])
 
 
+def write_monitor_csv_header(csv_path: str):
+    """Header for monitor summary logs.
+
+    Each row corresponds to one episode.
+    """
+
+    with open(csv_path, mode="w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            [
+                "Task Description",
+                "Episode Index",
+                "Perturb Mode",
+                "Perturbed Description",
+                "Success",
+                "Max Score",
+                "Mean Score",
+                "Num Triggered",
+                "NearMiss",
+            ]
+        )
+
+
+def append_monitor_csv_row(
+    csv_path: str,
+    task_description: str,
+    episode_idx: int,
+    perturb_mode: str,
+    perturbed_description: str,
+    success: bool,
+    max_score: float,
+    mean_score: float,
+    num_triggered: float,
+    nearmiss: bool,
+):
+    with open(csv_path, mode="a", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            [
+                task_description,
+                episode_idx,
+                perturb_mode,
+                perturbed_description,
+                int(success),
+                max_score,
+                mean_score,
+                num_triggered,
+                int(nearmiss),
+            ]
+        )
+
+
 def save_actions_json(path: str, data: Dict[str, Dict[int, List[List[float]]]]):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)

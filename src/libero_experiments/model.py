@@ -26,7 +26,7 @@ def load_model(cfg: Any):
             model = AutoModelForVision2Seq.from_pretrained(
                 cfg.model.checkpoint,
                 attn_implementation="flash_attention_2",
-                torch_dtype=torch.bfloat16,
+                dtype=torch.bfloat16,
                 load_in_8bit=cfg.model.load_in_8bit,
                 load_in_4bit=cfg.model.load_in_4bit,
                 low_cpu_mem_usage=True,
@@ -40,7 +40,7 @@ def load_model(cfg: Any):
             model = AutoModelForVision2Seq.from_pretrained(
                 cfg.model.checkpoint,
                 attn_implementation="sdpa",
-                torch_dtype=torch.bfloat16,
+                dtype=torch.bfloat16,
                 load_in_8bit=cfg.model.load_in_8bit,
                 load_in_4bit=cfg.model.load_in_4bit,
                 low_cpu_mem_usage=True,
@@ -53,7 +53,7 @@ def load_model(cfg: Any):
         model = AutoModelForVision2Seq.from_pretrained(
             cfg.model.checkpoint,
             attn_implementation="sdpa",
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             load_in_8bit=cfg.model.load_in_8bit,
             load_in_4bit=cfg.model.load_in_4bit,
             low_cpu_mem_usage=True,

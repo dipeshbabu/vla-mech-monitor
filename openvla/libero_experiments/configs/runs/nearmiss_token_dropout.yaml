@@ -1,0 +1,31 @@
+env:
+  task_suite_name: libero_object
+  num_trials_per_task: 1
+  seed: 42
+  num_steps_wait: 10
+
+model:
+  family: openvla
+  name: openvla-7b
+  device: cuda
+  dtype: bfloat16
+
+intervention:
+  enabled: false
+
+monitor:
+  enabled: true
+  # monitor is enabled only to turn on nearmiss perturbations in the eval loop,
+  # but you are not doing closed-loop steering unless direction_path is set.
+  direction_path: ""   # leave empty so DirectionMonitor is not used (or keep enabled:false if your eval code requires it)
+  nearmiss:
+    enabled: true
+    mode: token_dropout
+    token_dropout_p: 0.10
+    seed: 123
+
+logging:
+  root_dir: ./runs
+  save_video: false
+  save_actions: true
+  verbose: true

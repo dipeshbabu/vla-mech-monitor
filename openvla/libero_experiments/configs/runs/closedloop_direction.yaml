@@ -1,0 +1,42 @@
+env:
+  task_suite_name: libero_object
+  num_trials_per_task: 1
+  seed: 42
+  num_steps_wait: 10
+
+model:
+  family: openvla
+  name: openvla-7b
+  device: cuda
+  dtype: bfloat16
+
+intervention:
+  enabled: true
+  dict_name: your_intervention_dict_name_here   # must exist in your intervention config
+  coef: 0.0                                    # start at 0; monitor will raise it when triggered
+
+monitor:
+  enabled: true
+  direction_path: ./artifacts/directions/wrong_object_layer20_downproj.npy
+  module_regex: "model\\.layers\\.\\d+\\.mlp\\.down_proj"
+  layer_idx: 20
+  reduce: mean
+  normalize: true
+
+  threshold: 0.55
+  warmup_steps: 20
+  cooldown_steps: 30
+  coef_gain_k: 0.25
+  max_coef: 1.0
+
+  nearmiss:
+    enabled: true
+    mode: lr_swap
+    lr_swap_prob: 1.0
+    seed: 123
+
+logging:
+  root_dir: ./runs
+  save_video: false
+  save_actions: true
+  verbose: true
