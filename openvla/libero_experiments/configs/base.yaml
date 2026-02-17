@@ -16,6 +16,23 @@ intervention:
   dict_name: blank
   coef: 1.0
 
+monitor:
+  enabled: false
+  layer: 0
+  site: mlp.down_proj.pre
+  direction_path: null
+  agg: mean
+  control_mode: closed_loop
+  tau: 0.0
+  alpha: 1.0
+  patience: 2
+  duration: 5
+  cooldown: 10
+  sign: -1
+  nearmiss:
+    enabled: false
+    mode: none
+
 logging:
   root_dir: libero_experiments/logs
   save_video: true

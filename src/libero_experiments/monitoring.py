@@ -1,188 +1,198 @@
-"""Activation monitoring + recognizes simple failure signatures.
+"""Monitoring primitives for closed-loop interventions.
 
-This module is designed to be *minimal viable* for a class project:
-
-* one capture site (a single module, often an MLP projection)
-* one monitor (directional score on the captured activation)
-* optional closed-loop controller that modulates intervention strength
-
-The key design choice is to keep everything local to the existing codebase:
-we rely only on PyTorch forward(pre) hooks and a saved direction vector.
+This module provides:
+- DirectionMonitor: projects captured activations onto a direction vector -> scalar risk.
+- ClosedLoopController: converts risk -> intervention coefficient schedule (hysteresis/patience/cooldown).
+- Control modes for causal baselines: open-loop, random-direction, wrong-layer.
 """
 
 from __future__ import annotations
 
-import json
-import os
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
-import torch
-
-
-@dataclass
-class CoefRef:
-    """Mutable coefficient container; hooks can read this each forward pass."""
-    value: float = 0.0
-
-    def get(self) -> float:
-        return float(self.value)
-
-    def set(self, v: float) -> None:
-        self.value = float(v)
 
 
 def load_direction(path: str) -> np.ndarray:
+    """Load a 1D direction vector from a .npy file."""
     v = np.load(path)
+    v = np.asarray(v, dtype=np.float32)
     if v.ndim != 1:
         raise ValueError(f"Expected direction to be 1D, got shape {v.shape}")
-    denom = np.linalg.norm(v) + 1e-12
-    return (v / denom).astype(np.float32)
+    n = float(np.linalg.norm(v) + 1e-8)
+    return v / n
 
 
-def _dot(a: np.ndarray, b: np.ndarray) -> float:
-    return float(np.dot(a.astype(np.float32), b.astype(np.float32)))
+@dataclass
+class DirectionMonitor:
+    """Fast risk signal using a fixed direction vector.
 
-
-class RiskMonitor:
+    The direction is assumed to be a 1D numpy array with shape (d,).
+    The activation tensor is expected to be (n_sites, d) or (d,).
     """
-    Minimal direction-based monitor + closed-loop scheduler.
+    direction: np.ndarray
+    agg: str = "mean"  # mean | max
+    normalize: bool = True
 
-    The eval loop must call:
-      - monitor.end_step(hidden_by_site, t)
-      - monitor.end_episode(task_desc, episode_idx, success, extra_meta)
+    def __post_init__(self) -> None:
+        d = np.asarray(self.direction, dtype=np.float32)
+        if d.ndim != 1:
+            raise ValueError(f"direction must be 1D, got shape={d.shape}")
+        if self.normalize:
+            n = float(np.linalg.norm(d) + 1e-8)
+            d = d / n
+        self.direction = d
 
-    Assumes one primary site (cfg.monitor.site) for MVP.
+    def score(self, acts: np.ndarray) -> float:
+        x = np.asarray(acts, dtype=np.float32)
+        if x.ndim == 1:
+            proj = float(np.dot(x, self.direction))
+            return proj
+        if x.ndim == 2:
+            projs = x @ self.direction  # (n_sites,)
+            if self.agg == "max":
+                return float(np.max(projs))
+            return float(np.mean(projs))
+        raise ValueError(f"acts must be 1D or 2D, got shape={x.shape}")
+
+
+@dataclass
+class ClosedLoopController:
+    """Turns risk into a time-varying intervention coefficient.
+
+    This controller is purposely simple and reproducible:
+      - Optional patience: require risk>tau for N consecutive steps before triggering
+      - Optional cooldown: after a trigger, wait cooldown steps before allowing another trigger
+      - Optional duration: apply intervention for T steps after a trigger
+
+    coef(t) is either 0 or alpha (or -alpha) depending on sign.
     """
+    tau: float
+    alpha: float
+    patience: int = 1
+    duration: int = 1
+    cooldown: int = 0
+    sign: int = -1  # +1 or -1 (applied as sign * alpha)
 
-    def __init__(
-        self,
-        cfg: Any,  # expects RunConfig.monitor-like fields
-        direction: np.ndarray,
-        coef_ref: Optional[CoefRef],
-        run_dir: str,
-    ) -> None:
-        self.cfg = cfg
-        self.direction = direction
-        self.coef_ref = coef_ref
-        self.run_dir = run_dir
+    # state
+    _above: int = 0
+    _active_left: int = 0
+    _cooldown_left: int = 0
+    num_triggers: int = 0
 
-        self._cooldown_until: int = -1
-        self._active_until: int = -1
-        self._above_count: int = 0
+    def reset(self) -> None:
+        self._above = 0
+        self._active_left = 0
+        self._cooldown_left = 0
+        self.num_triggers = 0
 
-        self._t: List[int] = []
-        self._risk: List[float] = []
-        self._coef: List[float] = []
-        self._triggered: List[bool] = []
-        self._activations: List[Optional[List[float]]] = []
+    def step(self, risk: float) -> Tuple[float, bool]:
+        """Advance controller by one timestep.
 
-        os.makedirs(run_dir, exist_ok=True)
-        self.trace_path = os.path.join(run_dir, "monitor_traces.jsonl")
-
-    def _compute_risk(self, hidden_by_site: Dict[str, torch.Tensor]) -> Tuple[float, Optional[np.ndarray]]:
-        site = self.cfg.site
-        if site not in hidden_by_site:
-            return 0.0, None
-
-        h = hidden_by_site[site]
-        if isinstance(h, torch.Tensor):
-            h_np = h.detach().float().cpu().numpy()
-        else:
-            h_np = np.asarray(h, dtype=np.float32)
-
-        if h_np.ndim != 1:
-            h_np = h_np.reshape(-1)
-
-        # If direction dim mismatch, fall back to 0 (prevents silent wrong math)
-        if h_np.shape[0] != self.direction.shape[0]:
-            return 0.0, None
-
-        return _dot(h_np, self.direction), h_np
-
-    def end_step(self, hidden_by_site: Dict[str, torch.Tensor], t: int) -> None:
-        score, h_np = self._compute_risk(hidden_by_site)
-
+        Returns: (coef, triggered_now)
+        """
         triggered = False
-        coef_now = self.coef_ref.get() if self.coef_ref is not None else 0.0
 
-        # Closed-loop scheduling (only if enabled and we have coef_ref)
-        if getattr(self.cfg, "closed_loop", False) and self.coef_ref is not None:
-            in_cooldown = (t <= self._cooldown_until)
-            is_active = (t <= self._active_until)
+        if self._cooldown_left > 0:
+            self._cooldown_left -= 1
 
-            # Track threshold crossings only when not in cooldown and not already active
-            if (not in_cooldown) and (not is_active) and (score > float(self.cfg.threshold)):
-                self._above_count += 1
-            else:
-                self._above_count = 0
+        # If currently active, keep applying
+        if self._active_left > 0:
+            self._active_left -= 1
+            coef = float(self.sign * self.alpha)
+            return coef, False
 
-            # Trigger if patience satisfied
-            if (not in_cooldown) and (not is_active) and (self._above_count >= int(self.cfg.patience)):
-                triggered = True
-                self._above_count = 0
-
-                self._active_until = t + int(self.cfg.duration) - 1
-                self._cooldown_until = self._active_until + \
-                    int(self.cfg.cooldown)
-
-                # Apply intervention
-                self.coef_ref.set(float(self.cfg.alpha))
-                coef_now = self.coef_ref.get()
-
-            # Turn off after active window
-            if (not triggered) and (t > self._active_until):
-                self.coef_ref.set(0.0)
-                coef_now = 0.0
-
-        self._t.append(int(t))
-        self._risk.append(float(score))
-        self._coef.append(float(coef_now))
-        self._triggered.append(bool(triggered))
-
-        if getattr(self.cfg, "save_activations", False) and h_np is not None:
-            self._activations.append(h_np.astype(np.float16).tolist())
+        # Not active: check trigger condition (respect cooldown)
+        if self._cooldown_left == 0 and risk > self.tau:
+            self._above += 1
         else:
-            self._activations.append(None)
+            self._above = 0
 
-    def end_episode(
-        self,
-        task_description: str,
-        episode_idx: int,
-        success: bool,
-        extra: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        rec: Dict[str, Any] = {
-            "task": task_description,
-            "episode_idx": int(episode_idx),
-            "success": bool(success),
-            "site": self.cfg.site,
-            "threshold": float(self.cfg.threshold),
-            "patience": int(self.cfg.patience),
-            "duration": int(self.cfg.duration),
-            "cooldown": int(self.cfg.cooldown),
-            "alpha": float(self.cfg.alpha),
-            "closed_loop": bool(getattr(self.cfg, "closed_loop", False)),
-            "t": self._t,
-            "risk": self._risk,
-            "coef": self._coef,
-            "triggered": self._triggered,
+        if self._cooldown_left == 0 and self._above >= max(1, self.patience):
+            triggered = True
+            self.num_triggers += 1
+            self._active_left = max(1, self.duration) - 1
+            self._cooldown_left = max(0, self.cooldown)
+            self._above = 0
+
+        coef = float(self.sign * self.alpha) if triggered else 0.0
+        return coef, triggered
+
+
+@dataclass
+class MonitorLogStep:
+    t: int
+    risk: float
+    coef: float
+    triggered: bool
+
+
+@dataclass
+class MonitorEpisodeLog:
+    task_description: str
+    episode_idx: int
+    seed: int
+    perturbation: Optional[str] = None
+    steps: List[MonitorLogStep] = field(default_factory=list)
+    success: Optional[bool] = None
+    failure_type: Optional[str] = None
+    failure_t: Optional[int] = None
+
+    def to_dict(self) -> Dict:
+        return {
+            "task_description": self.task_description,
+            "episode_idx": self.episode_idx,
+            "seed": self.seed,
+            "perturbation": self.perturbation,
+            "steps": [
+                {"t": s.t, "risk": float(s.risk), "coef": float(s.coef), "triggered": bool(s.triggered)}
+                for s in self.steps
+            ],
+            "success": self.success,
+            "failure_type": self.failure_type,
+            "failure_t": self.failure_t,
         }
-        if getattr(self.cfg, "save_activations", False):
-            rec["activations"] = self._activations
-        if extra:
-            rec["extra"] = extra
 
-        with open(self.trace_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec) + "\n")
 
-        # Reset per-episode buffers
-        self._cooldown_until = -1
-        self._active_until = -1
-        self._above_count = 0
-        self._t = []
-        self._risk = []
-        self._coef = []
-        self._triggered = []
-        self._activations = []
+def apply_control_to_intervention_dict(
+    intervention_dict: Dict[int, Dict[int, float]],
+    mode: str,
+    *,
+    seed: int,
+    n_layers: int,
+    d_model: int,
+) -> Dict[int, Dict[int, float]]:
+    """Create a causal control variant of an intervention dict.
+
+    intervention_dict: {layer_idx: {neuron_idx: value}}
+    mode:
+      - "none": return as-is
+      - "random_direction": same number of neurons per layer, random indices
+      - "wrong_layer": shift layers by +1 (wrap-around)
+    """
+    mode = (mode or "none").lower()
+    if mode in ("none", "closed_loop", "open_loop"):
+        return intervention_dict
+
+    rng = np.random.default_rng(int(seed))
+
+    if mode == "random_direction":
+        out: Dict[int, Dict[int, float]] = {}
+        for layer, neurons in intervention_dict.items():
+            k = len(neurons)
+            if k == 0:
+                continue
+            idx = rng.choice(d_model, size=k, replace=False).tolist()
+            # keep the same target value distribution (all 1.0 in most dicts)
+            val = list(neurons.values())[0] if len(neurons) > 0 else 1.0
+            out[int(layer)] = {int(i): float(val) for i in idx}
+        return out
+
+    if mode == "wrong_layer":
+        out = {}
+        for layer, neurons in intervention_dict.items():
+            out[int((layer + 1) % n_layers)] = dict(neurons)
+        return out
+
+    raise ValueError(f"Unknown monitor control_mode: {mode}")

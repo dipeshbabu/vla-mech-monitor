@@ -1,8 +1,14 @@
-"""Configuration dataclasses and YAML loader."""
+"""Lightweight config system (YAML) for LIBERO experiments.
+
+This avoids Hydra to keep the repo easy to run on Windows and clusters.
+
+Key addition for this project:
+- monitor: closed-loop parameters + causal control modes
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, field
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
@@ -11,7 +17,7 @@ import yaml
 
 @dataclass
 class ModelConfig:
-    family: str = "openvla"
+    family: Literal["openvla"] = "openvla"
     checkpoint: str = "openvla/openvla-7b-finetuned-libero-10"
     load_in_8bit: bool = False
     load_in_4bit: bool = False
@@ -20,9 +26,9 @@ class ModelConfig:
 
 @dataclass
 class EnvConfig:
-    task_suite_name: str = "libero_spatial"
+    task_suite_name: str = "libero_10"
     num_steps_wait: int = 10
-    num_trials_per_task: int = 50
+    num_trials_per_task: int = 1
     seed: int = 7
 
 
@@ -30,81 +36,75 @@ class EnvConfig:
 class InterventionConfig:
     enabled: bool = False
     dict_name: str = "blank"
+    # Optional: provide separate dictionaries per failure mode.
+    # If set, closed-loop can switch which dict is active at runtime.
+    dict_by_mode: dict[str, str] = field(default_factory=dict)
     coef: float = 1.0
 
 
 @dataclass
-class NearMissConfig:
-    """Settings for generating "near-miss" rollouts.
-
-    This repo's original evaluation runs the policy on the *clean* task
-    description. For monitoring research, it can be useful to generate
-    rollouts that are *close* to the nominal task but more error-prone.
-    The simplest version is to perturb the natural-language instruction.
-    """
-
-    # enabled: bool = False
-    # # "lr_swap" flips left/right; "synonym" does lightweight wording swaps.
-    # mode: Literal["lr_swap", "synonym"] = "lr_swap"
-    # # Probability of applying a perturbation on a given episode (0..1).
-    # p_apply: float = 1.0
-
+class VisualNearMissConfig:
+    """Deterministic image-space perturbations applied to the observation image."""
     enabled: bool = False
+    # Supported: "occlusion", "brightness", "blur", "camera_jitter"
+    kinds: list[str] = field(default_factory=list)
+    # Strength in [0, 1] (interpreted per-kind)
+    strength: float = 0.3
 
-    # supported in src/libero_experiments/nearmiss.py:
-    # - "none"
-    # - "lr_swap"
-    # - "synonym"
-    # - "token_dropout"
-    mode: str = "none"
 
-    # used by token_dropout mode
-    token_dropout_p: float = 0.10
+@dataclass
+class DynamicsNearMissConfig:
+    """Deterministic action/dynamics perturbations applied in an env wrapper."""
+    enabled: bool = False
+    # Supported: "action_delay", "action_noise", "frame_skip"
+    kinds: list[str] = field(default_factory=list)
+    action_delay: int = 0
+    action_noise_std: float = 0.0
+    frame_skip: int = 1
 
-    # used by lr_swap mode
-    lr_swap_prob: float = 1.0
 
-    # RNG seed for deterministic perturbations
-    seed: int = 0
+@dataclass
+class NearMissConfig:
+    """Near-miss perturbation configuration."""
+    enabled: bool = False
+    mode: Literal["none", "swap_left_right", "synonym_swap"] = "none"
+    visual: VisualNearMissConfig = field(default_factory=VisualNearMissConfig)
+    dynamics: DynamicsNearMissConfig = field(default_factory=DynamicsNearMissConfig)
+
+
 
 
 @dataclass
 class MonitorConfig:
-    """Activation-based monitoring and closed-loop steering configuration."""
-
     enabled: bool = False
+    failure_type: Literal['wrong_object','drop','goal_drift'] = 'wrong_object'
 
-    # direction monitor uses a vector saved on disk (e.g. .npy)
-    direction_path: str = ""
+    # capture site (keep MVP simple: one layer/site)
+    layer: int = 0
+    site: Literal["mlp.down_proj.pre", "mlp.down_proj.post"] = "mlp.down_proj.pre"
 
-    # where to hook in the model: match module name and pick which layer index
-    # (DirectionMonitor supports regex + layer_idx filtering)
-    module_regex: str = r"model\.layers\.\d+\.mlp\.down_proj"
-    layer_idx: int = 20
+    # direction monitor
+    direction_path: Optional[str] = None  # .npy vector
+    agg: Literal["mean", "max"] = "mean"
 
-    # reduce hook activations -> scalar score
-    # supported in DirectionMonitor: "mean" or "last"
-    reduce: str = "mean"
+    # closed-loop controller params
+    control_mode: Literal["closed_loop", "open_loop", "random_direction", "wrong_layer", "none"] = "closed_loop"
+    tau: float = 0.0
+    alpha: float = 1.0
+    patience: int = 1
+    duration: int = 1
+    cooldown: int = 0
+    sign: int = -1
 
-    # whether to L2-normalize activation before dotting with direction
-    normalize: bool = True
-
-    # trigger threshold
-    threshold: float = 0.50
-
-    # closed-loop steering schedule
-    warmup_steps: int = 0
-    cooldown_steps: int = 20
-    coef_gain_k: float = 0.25
-    max_coef: float = 1.0
-
-    # NearMiss perturbations applied inside eval loop (instruction-level for now)
+    # logging
+    save_monitor_csv: bool = True
+    save_activation_trace: bool = True
     nearmiss: NearMissConfig = field(default_factory=NearMissConfig)
 
 
 @dataclass
 class LoggingConfig:
-    root_dir: str = "logs"
+    root_dir: str = "libero_experiments/logs"
     save_video: bool = True
     save_actions: bool = True
 
@@ -127,6 +127,22 @@ def _deep_update(base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any
     return base
 
 
+def _load_monitor_config(raw: Dict[str, Any]) -> MonitorConfig:
+    nearmiss_raw = raw.get("nearmiss", {}) if isinstance(raw.get("nearmiss", {}), dict) else {}
+    raw2 = dict(raw)
+
+    # Nested dataclasses for near-miss visual/dynamics config
+    visual_raw = nearmiss_raw.get("visual", {}) if isinstance(nearmiss_raw.get("visual", {}), dict) else {}
+    dynamics_raw = nearmiss_raw.get("dynamics", {}) if isinstance(nearmiss_raw.get("dynamics", {}), dict) else {}
+
+    nearmiss_raw2 = dict(nearmiss_raw)
+    nearmiss_raw2["visual"] = VisualNearMissConfig(**visual_raw)
+    nearmiss_raw2["dynamics"] = DynamicsNearMissConfig(**dynamics_raw)
+
+    raw2["nearmiss"] = NearMissConfig(**nearmiss_raw2)
+    return MonitorConfig(**raw2)
+
+
 def load_config(path: str | Path, overrides: Dict[str, Any] | None = None) -> RunConfig:
     path = Path(path)
     with path.open("r", encoding="utf-8") as f:
@@ -144,35 +160,33 @@ def load_config(path: str | Path, overrides: Dict[str, Any] | None = None) -> Ru
     )
 
 
-def _load_monitor_config(raw: Dict[str, Any]) -> MonitorConfig:
-    # nested dataclasses aren't handled automatically by **raw
-    nearmiss_raw = raw.get("nearmiss", {}) if isinstance(raw.get("nearmiss", {}), dict) else {}
-    raw2 = dict(raw)
-    raw2["nearmiss"] = NearMissConfig(**nearmiss_raw)
-    return MonitorConfig(**raw2)
-
-
 def parse_overrides(pairs: list[str]) -> Dict[str, Any]:
     """Parse key=value overrides into nested dicts (dot notation)."""
     overrides: Dict[str, Any] = {}
     for pair in pairs:
         if "=" not in pair:
             continue
-        key, raw = pair.split("=", 1)
-        # basic type coercion
-        if raw.lower() in {"true", "false"}:
-            value: Any = raw.lower() == "true"
+        key, raw_val = pair.split("=", 1)
+
+        # parse scalar types
+        val: Any = raw_val
+        if raw_val.lower() in ("true", "false"):
+            val = raw_val.lower() == "true"
         else:
             try:
-                value = int(raw)
+                if "." in raw_val:
+                    val = float(raw_val)
+                else:
+                    val = int(raw_val)
             except ValueError:
-                try:
-                    value = float(raw)
-                except ValueError:
-                    value = raw
-        target = overrides
+                val = raw_val
+
+        # dot notation
+        cur = overrides
         parts = key.split(".")
-        for part in parts[:-1]:
-            target = target.setdefault(part, {})
-        target[parts[-1]] = value
+        for p in parts[:-1]:
+            if p not in cur or not isinstance(cur[p], dict):
+                cur[p] = {}
+            cur = cur[p]
+        cur[parts[-1]] = val
     return overrides

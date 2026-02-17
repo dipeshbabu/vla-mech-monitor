@@ -1,131 +1,96 @@
-"""Near-miss rollout generation utilities.
+"""Near-miss rollout utilities.
 
-We treat a *near-miss* as a rollout that is close to the nominal task but more
-error-prone. The minimal, repo-local way to generate this is to perturb the
-natural-language task description passed to the policy.
-
-This intentionally stays lightweight: it does not require extra labels,
-simulation changes, or external datasets.
+Instruction perturbations are applied by rewriting the task description.
+Visual and dynamics perturbations are sampled deterministically per episode and
+applied at runtime via wrappers.
 """
 
 from __future__ import annotations
 
-import random
-import re
-from typing import Literal, Tuple
+from dataclasses import asdict
+from typing import Any, Dict, Optional, Tuple
+
+import numpy as np
+
+from libero_experiments.config import NearMissConfig
+from libero_experiments.env_wrappers import DynamicsSpec
+from libero_experiments.perturbations import choose_kind
 
 
-def perturb_task_description(
-    task_description: str,
-    mode: Literal["none", "lr_swap", "synonym", "token_dropout"],
-    *,
-    token_dropout_p: float = 0.08,
-    lr_swap_prob: float = 0.5,
-    seed: int = 0,
-) -> Tuple[str, str]:
-    """Return (effective_description, near_miss_kind).
-
-    This is the main entry point used by eval_libero.py.
-    """
-
-    if mode == "none":
-        return task_description, "none"
-
-    if mode == "lr_swap":
-        out = maybe_perturb_instruction(
-            task_description,
-            enabled=True,
-            mode="lr_swap",
-            p_apply=lr_swap_prob,
-            seed=seed,
-        )
-        return out, "lr_swap" if out != task_description else "none"
-
-    if mode == "synonym":
-        out = maybe_perturb_instruction(
-            task_description,
-            enabled=True,
-            mode="synonym",
-            p_apply=1.0,
-            seed=seed,
-        )
-        return out, "synonym" if out != task_description else "none"
-
-    if mode == "token_dropout":
-        out = _token_dropout(task_description, p=token_dropout_p, seed=seed)
-        return out, "token_dropout" if out != task_description else "none"
-
-    return task_description, "none"
-
-
-def maybe_perturb_instruction(
-    instruction: str,
-    *,
-    enabled: bool,
-    mode: Literal["lr_swap", "synonym"],
-    p_apply: float,
-    seed: int,
-) -> str:
-    """Return a (possibly) perturbed instruction.
-
-    Args:
-        instruction: Original task description.
-        enabled: Whether perturbations are enabled.
-        mode: Perturbation type.
-        p_apply: Probability of applying perturbation (0..1).
-        seed: Seed for deterministic perturbations.
-    """
-
-    if not enabled:
-        return instruction
-
-    rng = random.Random(seed)
-    if rng.random() > max(0.0, min(1.0, p_apply)):
-        return instruction
-
-    if mode == "lr_swap":
-        return _swap_left_right(instruction)
-    if mode == "synonym":
-        return _light_synonym_swap(instruction, rng=rng)
-    return instruction
+_SYNONYMS = {
+    "cup": ["mug", "cup"],
+    "mug": ["cup", "mug"],
+    "bowl": ["dish", "bowl"],
+    "plate": ["dish", "plate"],
+}
 
 
 def _swap_left_right(text: str) -> str:
-    # Use placeholders to avoid double replacement.
-    text2 = re.sub(r"\bleft\b", "__TMP_LEFT__", text, flags=re.IGNORECASE)
-    text2 = re.sub(r"\bright\b", "left", text2, flags=re.IGNORECASE)
-    text2 = re.sub(r"__TMP_LEFT__", "right", text2)
-    return text2
+    tmp = text.replace("left", "__TMP_LEFT__").replace("right", "left").replace("__TMP_LEFT__", "right")
+    return tmp
 
 
-def _light_synonym_swap(text: str, *, rng: random.Random) -> str:
-    # Very small set of safe, meaning-preserving swaps.
-    swaps = [
-        (r"\bgrasp\b", "grab"),
-        (r"\bgrab\b", "grasp"),
-        (r"\bplace\b", "put"),
-        (r"\bput\b", "place"),
-        (r"\bmove\b", "shift"),
-        (r"\bshift\b", "move"),
-    ]
-
-    # Apply at most one swap to keep perturbations mild.
-    pattern, repl = rng.choice(swaps)
-    return re.sub(pattern, repl, text, flags=re.IGNORECASE)
+def _synonym_swap(text: str, rng: np.random.Generator) -> str:
+    out = text
+    for k, vals in _SYNONYMS.items():
+        if k in out:
+            out = out.replace(k, str(rng.choice(vals)))
+    return out
 
 
-def _token_dropout(text: str, *, p: float, seed: int) -> str:
-    """Drop a small fraction of tokens (very mild, deterministic)."""
+def apply_nearmiss_to_task_description(task_description: str, cfg: NearMissConfig, rng: np.random.Generator) -> str:
+    if not cfg.enabled or cfg.mode == "none":
+        return task_description
+    if cfg.mode == "swap_left_right":
+        return _swap_left_right(task_description)
+    if cfg.mode == "synonym_swap":
+        return _synonym_swap(task_description, rng)
+    raise ValueError(f"Unknown NearMiss instruction mode: {cfg.mode}")
 
-    p = max(0.0, min(0.5, p))
-    tokens = text.split()
-    if len(tokens) <= 3 or p <= 0:
-        return text
 
-    rng = random.Random(seed)
+def sample_visual_spec(cfg: NearMissConfig, rng: np.random.Generator) -> Optional[Dict[str, Any]]:
+    if not (cfg.enabled and cfg.visual.enabled and cfg.visual.kinds):
+        return None
+    kind = choose_kind(cfg.visual.kinds, rng)
+    if kind is None:
+        return None
+    return {"kind": kind, "strength": float(cfg.visual.strength)}
 
-    # Keep at least 3 tokens to avoid empty instructions.
-    kept = [tok for tok in tokens if rng.random() > p]
-    if len(kept) < 3:
-        kept = tokens[:3]
-    return " ".join(kept)
+
+def sample_dynamics_spec(cfg: NearMissConfig) -> Optional[DynamicsSpec]:
+    if not (cfg.enabled and cfg.dynamics.enabled and cfg.dynamics.kinds):
+        return None
+    kinds = set(cfg.dynamics.kinds)
+    spec = DynamicsSpec()
+    if "action_delay" in kinds:
+        spec.action_delay = int(cfg.dynamics.action_delay)
+    if "action_noise" in kinds:
+        spec.action_noise_std = float(cfg.dynamics.action_noise_std)
+    if "frame_skip" in kinds:
+        spec.frame_skip = int(cfg.dynamics.frame_skip)
+    if spec.action_delay == 0 and spec.action_noise_std == 0.0 and spec.frame_skip == 1:
+        return None
+    return spec
+
+
+def sample_nearmiss_variant(
+    task_description: str,
+    cfg: NearMissConfig,
+    rng: np.random.Generator,
+) -> Tuple[str, Dict[str, Any]]:
+    specs: Dict[str, Any] = {"instruction": None, "visual": None, "dynamics": None}
+
+    new_desc = task_description
+    if cfg.enabled and cfg.mode != "none":
+        new_desc = apply_nearmiss_to_task_description(task_description, cfg, rng)
+        specs["instruction"] = {"mode": cfg.mode}
+
+    v = sample_visual_spec(cfg, rng)
+    if v is not None:
+        specs["visual"] = v
+
+    d = sample_dynamics_spec(cfg)
+    if d is not None:
+        specs["dynamics"] = asdict(d)
+
+    return new_desc, specs
