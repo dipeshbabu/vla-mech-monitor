@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Packaging
+*.egg-info/
+*.egg
+
+# Env
+.env
+.venv/
+.python-version
+
+# Logs and artifacts
+**/logs/
+**/artifacts/
+utils/libero_config/
+utils/libero_assets/
+utils/libero_datasets/
+*.log
+*.out
+*.err
+*.tmp
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local editor files
+.vscode/
+
+# Test and cache directories
+.pytest_cache/
+.mypy_cache/
