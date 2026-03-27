@@ -319,7 +319,7 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
                     risk = 0.0
                     triggered = False
 
-                    if cap is not None and monitor is not None:
+                    if cap is not None:
                         with cap.capture(model):
                             action = get_action(
                                 model,
@@ -329,16 +329,21 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
                                 task_description,
                                 unnorm_key=cfg_unnorm_key,
                             )
+
                         acts = cap.last_activation()
                         if cfg.monitor.save_activation_trace and acts is not None:
                             episode_activations.append(acts.tolist())
-                        if acts is not None:
-                            risk = float(monitor.score(acts))
 
-                        if controller is not None and cfg.intervention.enabled:
+                        if acts is not None and monitor is not None:
+                            risk = float(monitor.score(acts))
+                        else:
+                            risk = 0.0
+
+                        if controller is not None and cfg.intervention.enabled and monitor is not None:
                             if (cfg.monitor.control_mode or "closed_loop").lower() == "closed_loop":
                                 coef, triggered = controller.step(risk)
                                 coef_ref.value = float(coef)
+                            # open_loop handled above
                     else:
                         action = get_action(
                             model,
