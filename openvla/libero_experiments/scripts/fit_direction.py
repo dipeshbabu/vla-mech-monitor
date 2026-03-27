@@ -79,7 +79,9 @@ def main() -> None:
                     help="Output .npy file path for direction")
     args = ap.parse_args()
 
-    trace_path = os.path.join(args.run_dir, "monitor_traces.jsonl")
+    trace_path = os.path.join(args.run_dir, "activation_traces.jsonl")
+    if not os.path.exists(trace_path):
+        trace_path = os.path.join(args.run_dir, "monitor_traces.jsonl")
     traces = _load_traces(trace_path)
     v = fit_direction(traces)
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
