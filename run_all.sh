@@ -33,6 +33,11 @@ TASK_IDS='[0,1,2,3,4]'
 TRIALS=20
 K_HORIZON=15
 OCC_STRENGTH=0.35
+FIT_RUN="logs/occluded_fit_run"
+CLEAN_BASE="logs/clean_baseline_run"
+OCC_BASE="logs/occluded_baseline_run"
+OCC_WARN="logs/occluded_warning_run"
+CLEAN_WARN="logs/clean_warning_run"
 
 echo "=================================================="
 echo "Running warning monitor experiments"
@@ -48,10 +53,6 @@ run_monitor_eval() {
     --k "${K_HORIZON}" | tee "${run_dir}/metrics_k${K_HORIZON}.txt"
 }
 
-latest_run_dir() {
-  ls -td logs/EVAL-* | head -n 1
-}
-
 echo
 echo "===================="
 echo "1) Occluded fit run"
@@ -59,6 +60,7 @@ echo "===================="
 
 python scripts/run_eval.py \
   --config "${CONFIG_PATH}" \
+  --override logging.run_name=occluded_fit_run \
   --override env.selected_task_ids="${TASK_IDS}" \
   --override env.num_trials_per_task="${TRIALS}" \
   --override monitor.control_mode=none \
@@ -69,7 +71,6 @@ python scripts/run_eval.py \
   --override 'monitor.nearmiss.visual.kinds=[occlusion]' \
   --override monitor.nearmiss.visual.strength="${OCC_STRENGTH}"
 
-FIT_RUN="$(latest_run_dir)"
 echo "FIT_RUN=${FIT_RUN}"
 
 echo
@@ -90,6 +91,7 @@ echo "=================="
 
 python scripts/run_eval.py \
   --config "${CONFIG_PATH}" \
+  --override logging.run_name=clean_baseline_run \
   --override env.selected_task_ids="${TASK_IDS}" \
   --override env.num_trials_per_task="${TRIALS}" \
   --override monitor.control_mode=none \
@@ -98,7 +100,6 @@ python scripts/run_eval.py \
   --override monitor.nearmiss.enabled=false \
   --override monitor.nearmiss.visual.enabled=false
 
-CLEAN_BASE="$(latest_run_dir)"
 echo "CLEAN_BASE=${CLEAN_BASE}"
 run_monitor_eval "${CLEAN_BASE}"
 
@@ -109,6 +110,7 @@ echo "======================"
 
 python scripts/run_eval.py \
   --config "${CONFIG_PATH}" \
+  --override logging.run_name=occluded_baseline_run \
   --override env.selected_task_ids="${TASK_IDS}" \
   --override env.num_trials_per_task="${TRIALS}" \
   --override monitor.control_mode=none \
@@ -119,7 +121,6 @@ python scripts/run_eval.py \
   --override 'monitor.nearmiss.visual.kinds=[occlusion]' \
   --override monitor.nearmiss.visual.strength="${OCC_STRENGTH}"
 
-OCC_BASE="$(latest_run_dir)"
 echo "OCC_BASE=${OCC_BASE}"
 run_monitor_eval "${OCC_BASE}"
 
@@ -163,6 +164,7 @@ echo "===================="
 
 python scripts/run_eval.py \
   --config "${CONFIG_PATH}" \
+  --override logging.run_name=occluded_warning_run \
   --override env.selected_task_ids="${TASK_IDS}" \
   --override env.num_trials_per_task="${TRIALS}" \
   --override monitor.control_mode=none \
@@ -177,7 +179,6 @@ python scripts/run_eval.py \
   --override 'monitor.nearmiss.visual.kinds=[occlusion]' \
   --override monitor.nearmiss.visual.strength="${OCC_STRENGTH}"
 
-OCC_WARN="$(latest_run_dir)"
 echo "OCC_WARN=${OCC_WARN}"
 run_monitor_eval "${OCC_WARN}"
 
@@ -188,6 +189,7 @@ echo "=================="
 
 python scripts/run_eval.py \
   --config "${CONFIG_PATH}" \
+  --override logging.run_name=clean_warning_run \
   --override env.selected_task_ids="${TASK_IDS}" \
   --override env.num_trials_per_task="${TRIALS}" \
   --override monitor.control_mode=none \
@@ -200,7 +202,6 @@ python scripts/run_eval.py \
   --override monitor.nearmiss.enabled=false \
   --override monitor.nearmiss.visual.enabled=false
 
-CLEAN_WARN="$(latest_run_dir)"
 echo "CLEAN_WARN=${CLEAN_WARN}"
 run_monitor_eval "${CLEAN_WARN}"
 

@@ -253,7 +253,7 @@ Create a manual labeling pack:
 ```bash
 python scripts/make_manual_label_pack.py \
   --logs-root logs \
-  --match "EVAL-" \
+  --match "_run" \
   --out manual_label_pack \
   --n 25
 ```
@@ -263,8 +263,16 @@ python scripts/make_manual_label_pack.py \
 Each run produces a directory under:
 
 ```text
-logs/EVAL-*
+logs/<run_name>
 ```
+
+Examples from the commands above:
+
+- `logs/occluded_fit_run`
+- `logs/clean_baseline_run`
+- `logs/occluded_baseline_run`
+- `logs/occluded_warning_run`
+- `logs/clean_warning_run`
 
 Common files:
 
