@@ -1,5 +1,4 @@
-# Draft B + warning-as-uncertainty wrapper (noop fallback)
-# Use this to address instructor feedback: operationalize the warning signal.
+# Warning-as-uncertainty wrapper (noop fallback)
 
 model:
   family: openvla
@@ -17,35 +16,26 @@ intervention:
 
 monitor:
   enabled: true
-  # activation capture site
   layer: 10
   site: mlp.down_proj.pre
   agg: mean
-
-  # direction vector used for risk (set after running fit_direction)
   direction_path: null
-
-  # do NOT steer in this run
   control_mode: none
   tau: 0.0
   alpha: 0.0
-
-  # visual perturbation: occlusion (NearMiss visual)
   nearmiss:
     enabled: true
     visual:
       enabled: true
       kinds: [occlusion]
       strength: 0.35
-
-  # NEW: use warning signal as uncertainty / OOD detector
   warning_policy: noop
-  warning_tau: 0.0      # set after calibration (e.g., 95th percentile on clean)
+  warning_tau: 0.0
   warning_patience: 2
   warning_duration: 3
   warning_cooldown: 5
 
 logging:
-  root_dir: libero_experiments/logs
+  root_dir: logs
   save_video: false
   save_actions: false

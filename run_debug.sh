@@ -17,12 +17,12 @@ set -euo pipefail
 # => 15 episodes per run
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OPENVLA_DIR="${ROOT_DIR}/openvla"
-CONFIG_PATH="libero_experiments/configs/runs/draftb_warning_noop.yaml"
+CONFIG_PATH="${ROOT_DIR}/configs/warning_noop.yaml"
 
-cd "${OPENVLA_DIR}"
+export PYTHONPATH="${ROOT_DIR}/src${PYTHONPATH:+:${PYTHONPATH}}"
+cd "${ROOT_DIR}"
 
-export LIBERO_CONFIG_PATH=../utils/libero_config
+export LIBERO_CONFIG_PATH="${ROOT_DIR}/utils/libero_config"
 export MUJOCO_GL="${MUJOCO_GL:-egl}"
 export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-egl}"
 
@@ -32,8 +32,8 @@ K_HORIZON=15
 OCC_STRENGTH=0.35
 
 echo "=================================================="
-echo "Running DEBUG Draft B + warning experiments"
-echo "OpenVLA dir: ${OPENVLA_DIR}"
+echo "Running DEBUG warning monitor experiments"
+echo "Repo root: ${ROOT_DIR}"
 echo "Task IDs: ${TASK_IDS}"
 echo "Trials per task: ${TRIALS}"
 echo "Episodes per run: 15"
@@ -41,13 +41,13 @@ echo "=================================================="
 
 run_monitor_eval() {
   local run_dir="$1"
-  python -m libero_experiments.monitor_eval \
+  python scripts/monitor_eval.py \
     --log "${run_dir}/monitor_rollouts.jsonl" \
     --k "${K_HORIZON}" | tee "${run_dir}/metrics_k${K_HORIZON}.txt"
 }
 
 latest_run_dir() {
-  ls -td libero_experiments/logs/EVAL-* | head -n 1
+  ls -td logs/EVAL-* | head -n 1
 }
 
 echo
@@ -55,7 +55,7 @@ echo "===================="
 echo "1) Occluded fit run"
 echo "===================="
 
-python libero_experiments/scripts/run_eval.py \
+python scripts/run_eval.py \
   --config "${CONFIG_PATH}" \
   --override env.selected_task_ids="${TASK_IDS}" \
   --override env.num_trials_per_task="${TRIALS}" \
@@ -75,8 +75,8 @@ echo "========================="
 echo "2) Fit failure direction"
 echo "========================="
 
-python libero_experiments/scripts/fit_direction.py \
-  --log "${FIT_RUN}/monitor_rollouts.jsonl" \
+python scripts/fit_direction.py \
+  --run-dir "${FIT_RUN}" \
   --out "${FIT_RUN}/failure_direction.npy"
 
 ls "${FIT_RUN}/failure_direction.npy"
@@ -86,7 +86,7 @@ echo "=================="
 echo "3) Clean baseline"
 echo "=================="
 
-python libero_experiments/scripts/run_eval.py \
+python scripts/run_eval.py \
   --config "${CONFIG_PATH}" \
   --override env.selected_task_ids="${TASK_IDS}" \
   --override env.num_trials_per_task="${TRIALS}" \
@@ -105,7 +105,7 @@ echo "======================"
 echo "4) Occluded baseline"
 echo "======================"
 
-python libero_experiments/scripts/run_eval.py \
+python scripts/run_eval.py \
   --config "${CONFIG_PATH}" \
   --override env.selected_task_ids="${TASK_IDS}" \
   --override env.num_trials_per_task="${TRIALS}" \
@@ -159,7 +159,7 @@ echo "===================="
 echo "6) Occluded + warning"
 echo "===================="
 
-python libero_experiments/scripts/run_eval.py \
+python scripts/run_eval.py \
   --config "${CONFIG_PATH}" \
   --override env.selected_task_ids="${TASK_IDS}" \
   --override env.num_trials_per_task="${TRIALS}" \
@@ -184,7 +184,7 @@ echo "=================="
 echo "7) Clean + warning"
 echo "=================="
 
-python libero_experiments/scripts/run_eval.py \
+python scripts/run_eval.py \
   --config "${CONFIG_PATH}" \
   --override env.selected_task_ids="${TASK_IDS}" \
   --override env.num_trials_per_task="${TRIALS}" \
@@ -254,11 +254,11 @@ for name, run_dir in runs.items():
         name,
         str(n),
         f"{sr:.4f}",
-        m.get("AUROC", ""),
-        m.get("AUPRC", ""),
-        m.get("Lead time mean", ""),
-        m.get("Warning rate", ""),
-        m.get("Warning triggers / ep", ""),
+        m.get("AUROC (fail within K)", ""),
+        m.get("AUPRC (fail within K)", ""),
+        m.get("Mean lead time (trigger -> fail)", ""),
+        m.get("Warning-active rate", ""),
+        m.get("Warning triggers / episode", ""),
     ]))
 PY
 

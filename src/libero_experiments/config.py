@@ -112,7 +112,7 @@ class MonitorConfig:
 
 @dataclass
 class LoggingConfig:
-    root_dir: str = "libero_experiments/logs"
+    root_dir: str = "logs"
     save_video: bool = True
     save_actions: bool = True
 

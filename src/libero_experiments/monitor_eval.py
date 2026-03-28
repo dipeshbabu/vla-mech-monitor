@@ -7,7 +7,7 @@ Computes:
 - Warning-active rate and warning triggers per episode
 
 Usage:
-  python -m libero_experiments.monitor_eval --log libero_experiments/logs/<run_id>/monitor_rollouts.jsonl --k 25
+  python scripts/monitor_eval.py --log logs/<run_id>/monitor_rollouts.jsonl --k 25
 """
 
 from __future__ import annotations
