@@ -12,9 +12,9 @@ set -euo pipefail
 # 8) summary table
 #
 # This is intentionally small and fast:
-# - 3 tasks
+# - 2 tasks
 # - 5 trials per task
-# => 15 episodes per run
+# => 10 episodes per run
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_PATH="${ROOT_DIR}/configs/warning_noop.yaml"
@@ -26,7 +26,7 @@ export LIBERO_CONFIG_PATH="${ROOT_DIR}/utils/libero_config"
 export MUJOCO_GL="${MUJOCO_GL:-egl}"
 export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-egl}"
 
-TASK_IDS='[0,1,2]'
+TASK_IDS='[0,1]'
 TRIALS=5
 K_HORIZON=15
 OCC_STRENGTH=0.35
@@ -36,7 +36,7 @@ echo "Running DEBUG warning monitor experiments"
 echo "Repo root: ${ROOT_DIR}"
 echo "Task IDs: ${TASK_IDS}"
 echo "Trials per task: ${TRIALS}"
-echo "Episodes per run: 15"
+echo "Episodes per run: 10"
 echo "=================================================="
 
 run_monitor_eval() {
