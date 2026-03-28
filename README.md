@@ -68,6 +68,12 @@ export PYOPENGL_PLATFORM=osmesa
 
 Use exactly one of those rendering setups for a shell session. `egl` is the preferred default when it works.
 
+Notes:
+
+- `flash-attn==2.5.5` is included for OpenVLA; if it is unavailable, OpenVLA automatically falls back to `sdpa`.
+- `setup/setup.sh` writes a `LIBERO_CONFIG_PATH` config under `utils/libero_config/` and downloads LIBERO assets to `utils/libero_assets/` plus `libero_10` datasets to `utils/libero_datasets/`.
+- Set `LIBERO_CONFIG_PATH=utils/libero_config` when running OpenVLA LIBERO evaluations.
+
 ## Main Config
 
 The main experiment config is:
