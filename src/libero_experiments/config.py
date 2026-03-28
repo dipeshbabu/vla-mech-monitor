@@ -113,6 +113,7 @@ class MonitorConfig:
 @dataclass
 class LoggingConfig:
     root_dir: str = "logs"
+    run_name: Optional[str] = None
     save_video: bool = True
     save_actions: bool = True
 

@@ -98,7 +98,13 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
     processor = get_processor(cfg) if cfg.model.family == "openvla" else None
 
     intervention_name = cfg.intervention.dict_name if cfg.intervention.enabled else "blank"
-    run_id = get_run_id(cfg.env.task_suite_name, cfg.model.family, intervention_name, cfg.intervention.coef)
+    run_id = get_run_id(
+        cfg.env.task_suite_name,
+        cfg.model.family,
+        intervention_name,
+        cfg.intervention.coef,
+        run_name=getattr(cfg.logging, "run_name", None),
+    )
     run_dir = create_run_dir(cfg.logging.root_dir, run_id)
 
     log_path = open_log_file(run_dir)

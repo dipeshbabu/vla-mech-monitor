@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import os
+import re
 from typing import Dict, List
 
 from libero_experiments.utils import DATE_TIME
@@ -12,11 +13,32 @@ from libero_experiments.utils import DATE_TIME
 
 def create_run_dir(root_dir: str, run_id: str) -> str:
     run_dir = os.path.join(root_dir, run_id)
+    os.makedirs(root_dir, exist_ok=True)
+    if os.path.isdir(run_dir) and os.listdir(run_dir):
+        raise FileExistsError(
+            f"Run directory already exists and is not empty: {run_dir}. "
+            "Choose a different logging.run_name or remove the old run first."
+        )
     os.makedirs(run_dir, exist_ok=True)
     return run_dir
 
 
-def get_run_id(task_suite: str, model_family: str, intervention_name: str | None = None, coef: float | None = None) -> str:
+def _sanitize_run_name(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._-")
+
+
+def get_run_id(
+    task_suite: str,
+    model_family: str,
+    intervention_name: str | None = None,
+    coef: float | None = None,
+    run_name: str | None = None,
+) -> str:
+    if run_name not in (None, ""):
+        cleaned = _sanitize_run_name(str(run_name))
+        if not cleaned:
+            raise ValueError(f"Invalid logging.run_name={run_name!r}")
+        return cleaned
     base = f"EVAL-{task_suite}-{model_family}-{DATE_TIME}"
     if intervention_name and intervention_name != "blank":
         base = f"INTERVENTION-{intervention_name}-coef{coef}-{DATE_TIME}"

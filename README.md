@@ -99,6 +99,7 @@ All commands below are run from repo root.
 ```bash
 python scripts/run_eval.py \
   --config configs/warning_noop.yaml \
+  --override logging.run_name=occluded_fit_run \
   --override env.selected_task_ids='[0,1,2,3,4]' \
   --override env.num_trials_per_task=20 \
   --override monitor.control_mode=none \
@@ -113,7 +114,7 @@ python scripts/run_eval.py \
 ### Fit the failure direction
 
 ```bash
-FIT_RUN=$(ls -td logs/EVAL-* | head -n 1)
+FIT_RUN=logs/occluded_fit_run
 
 python scripts/fit_direction.py \
   --run-dir "$FIT_RUN" \
@@ -125,6 +126,7 @@ python scripts/fit_direction.py \
 ```bash
 python scripts/run_eval.py \
   --config configs/warning_noop.yaml \
+  --override logging.run_name=clean_baseline_run \
   --override env.selected_task_ids='[0,1,2,3,4]' \
   --override env.num_trials_per_task=20 \
   --override monitor.control_mode=none \
@@ -139,6 +141,7 @@ python scripts/run_eval.py \
 ```bash
 python scripts/run_eval.py \
   --config configs/warning_noop.yaml \
+  --override logging.run_name=occluded_baseline_run \
   --override env.selected_task_ids='[0,1,2,3,4]' \
   --override env.num_trials_per_task=20 \
   --override monitor.control_mode=none \
@@ -153,7 +156,7 @@ python scripts/run_eval.py \
 ### Calibrate warning threshold from clean
 
 ```bash
-CLEAN_BASE=$(ls -td logs/EVAL-* | head -n 1)
+CLEAN_BASE=logs/clean_baseline_run
 export CLEAN_BASE
 
 python - <<'PY'
@@ -182,6 +185,7 @@ export WARNING_TAU=$(cat "$CLEAN_BASE/warning_tau.txt")
 ```bash
 python scripts/run_eval.py \
   --config configs/warning_noop.yaml \
+  --override logging.run_name=occluded_warning_run \
   --override env.selected_task_ids='[0,1,2,3,4]' \
   --override env.num_trials_per_task=20 \
   --override monitor.control_mode=none \
@@ -202,6 +206,7 @@ python scripts/run_eval.py \
 ```bash
 python scripts/run_eval.py \
   --config configs/warning_noop.yaml \
+  --override logging.run_name=clean_warning_run \
   --override env.selected_task_ids='[0,1,2,3,4]' \
   --override env.num_trials_per_task=20 \
   --override monitor.control_mode=none \
