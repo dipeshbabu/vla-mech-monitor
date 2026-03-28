@@ -202,7 +202,14 @@ class MonitorEpisodeLog:
             "seed": self.seed,
             "perturbation": self.perturbation,
             "steps": [
-                {"t": s.t, "risk": float(s.risk), "coef": float(s.coef), "triggered": bool(s.triggered)}
+                {
+                    "t": s.t,
+                    "risk": float(s.risk),
+                    "coef": float(s.coef),
+                    "triggered": bool(s.triggered),
+                    "warning_active": bool(s.warning_active),
+                    "warning_triggered": bool(s.warning_triggered),
+                }
                 for s in self.steps
             ],
             "success": self.success,

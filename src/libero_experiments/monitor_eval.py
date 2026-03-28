@@ -2,8 +2,9 @@
 
 Computes:
 - K-step failure prediction AUROC/AUPRC (binary: failure within K steps)
-- Mean lead time (first trigger -> failure_t) on episodes that fail
+- Mean lead time (first closed-loop or warning trigger -> failure_t) on episodes that fail
 - Intervention rate (steps with non-zero coef)
+- Warning-active rate and warning triggers per episode
 
 Usage:
   python -m libero_experiments.monitor_eval --log libero_experiments/logs/<run_id>/monitor_rollouts.jsonl --k 25
@@ -117,8 +118,13 @@ def compute_metrics(log_path: Path, k: int) -> Metrics:
             y_true_all.extend(y.astype(np.int32).tolist())
             y_score_all.extend(risk.tolist())
 
-            # lead time: first triggered step -> failure_t
-            trig_ts = [int(s["t"]) for s in steps if bool(s.get("triggered", False))]
+            # Lead time is measured from the first monitor event that fired.
+            # For warning-only runs, this comes from warning_triggered rather than closed-loop triggered.
+            trig_ts = [
+                int(s["t"])
+                for s in steps
+                if bool(s.get("triggered", False)) or bool(s.get("warning_triggered", False))
+            ]
             if trig_ts:
                 lead_times.append(float(failure_t - min(trig_ts)))
 
@@ -145,6 +151,8 @@ def main() -> None:
     print(f"AUPRC (fail within K): {m.auprc:.4f}")
     print(f"Mean lead time (trigger -> fail): {m.mean_lead:.2f} steps")
     print(f"Intervention rate (non-zero coef): {m.intervention_rate:.4f}")
+    print(f"Warning-active rate: {m.warning_rate:.4f}")
+    print(f"Warning triggers / episode: {m.warning_triggers_per_ep:.4f}")
 
 
 if __name__ == "__main__":

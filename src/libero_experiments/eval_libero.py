@@ -46,6 +46,7 @@ from libero_experiments.monitoring import (
     DirectionMonitor,
     MonitorEpisodeLog,
     MonitorLogStep,
+    WarningController,
     apply_control_to_intervention_dict,
     load_direction,
 )
@@ -188,6 +189,7 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
 
     monitor = None
     controller = None
+    warning_controller = None
     cap = None
     if cfg.monitor.enabled:
         cap = ActivationCapture(MonitorSite(layer=int(cfg.monitor.layer), site=str(cfg.monitor.site)))
@@ -210,6 +212,14 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
                 duration=int(cfg.monitor.duration),
                 cooldown=int(cfg.monitor.cooldown),
                 sign=int(cfg.monitor.sign),
+            )
+
+        if monitor is not None and (cfg.monitor.warning_policy or "none").lower() != "none":
+            warning_controller = WarningController(
+                tau=float(cfg.monitor.warning_tau),
+                patience=int(cfg.monitor.warning_patience),
+                duration=int(cfg.monitor.warning_duration),
+                cooldown=int(cfg.monitor.warning_cooldown),
             )
 
     fdet = FailureDetector()
@@ -269,6 +279,8 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
 
             if controller is not None:
                 controller.reset()
+            if warning_controller is not None:
+                warning_controller.reset()
             fdet.reset()
 
             episode_activations = []
@@ -318,6 +330,8 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
 
                     risk = 0.0
                     triggered = False
+                    warning_active = False
+                    warning_triggered = False
 
                     if cap is not None:
                         with cap.capture(model):
@@ -339,6 +353,9 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
                         else:
                             risk = 0.0
 
+                        if warning_controller is not None:
+                            warning_active, warning_triggered = warning_controller.step(risk)
+
                         if controller is not None and cfg.intervention.enabled and monitor is not None:
                             if (cfg.monitor.control_mode or "closed_loop").lower() == "closed_loop":
                                 coef, triggered = controller.step(risk)
@@ -358,6 +375,19 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
                     if cfg.model.family == "openvla":
                         action = invert_gripper_action(action)
 
+                    if warning_active and (cfg.monitor.warning_policy or "none").lower() != "none":
+                        pol = (cfg.monitor.warning_policy or "none").lower()
+                        if pol == "noop":
+                            action = np.asarray(get_libero_dummy_action(), dtype=np.float32)
+                        elif pol == "abort_episode":
+                            done = False
+                            failure_event = failure_event or type(
+                                "WarningAbort",
+                                (),
+                                {"failure_type": "aborted_by_warning", "t": int(t)},
+                            )()
+                            break
+
                     obs, reward, done, info = env.step(action.tolist())
                     current_episode_actions.append(action.tolist())
 
@@ -371,6 +401,8 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
                                 risk=float(risk),
                                 coef=float(coef_ref.value),
                                 triggered=bool(triggered),
+                                warning_active=bool(warning_active),
+                                warning_triggered=bool(warning_triggered),
                             )
                         )
 
