@@ -21,8 +21,8 @@ dependencies:
   - ninja
   - cmake
   - pip:
-      - transformers==4.48.1
-      - tokenizers==0.21.2
+      - transformers==4.40.1
+      - tokenizers==0.19.1
       - timm>=0.9.10,<1.0.0
       - accelerate
       - draccus
