@@ -16,7 +16,7 @@ import argparse
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple
+from typing import List
 
 import numpy as np
 
@@ -46,17 +46,21 @@ def _auc_roc(y_true: np.ndarray, y_score: np.ndarray) -> float:
 
 
 def _auc_pr(y_true: np.ndarray, y_score: np.ndarray) -> float:
-    # approximate AUPRC by sorting by score descending
+    # Average precision via stepwise integration over the precision-recall curve.
     y_true = y_true.astype(np.int32)
+    n_pos = int((y_true == 1).sum())
+    if n_pos == 0:
+        return float("nan")
     order = np.argsort(-y_score)
     y = y_true[order]
     tp = np.cumsum(y == 1)
     fp = np.cumsum(y == 0)
     precision = tp / np.maximum(tp + fp, 1)
-    recall = tp / max(int((y_true == 1).sum()), 1)
-    # integrate precision over recall (stepwise)
-    auprc = float(np.sum((recall[1:] - recall[:-1]) * precision[1:])) if len(recall) > 1 else float("nan")
-    return auprc
+    recall = tp / n_pos
+
+    precision = np.concatenate(([1.0], precision.astype(np.float64)))
+    recall = np.concatenate(([0.0], recall.astype(np.float64)))
+    return float(np.sum((recall[1:] - recall[:-1]) * precision[1:]))
 
 
 @dataclass
@@ -67,11 +71,27 @@ class Metrics:
     intervention_rate: float
     warning_rate: float
     warning_triggers_per_ep: float
+    baseline_auroc: float = float("nan")
+    baseline_auprc: float = float("nan")
+
+
+def _trigger_times(steps: List[dict]) -> List[int]:
+    warning_ts = [int(s["t"]) for s in steps if bool(s.get("warning_triggered", False))]
+    if warning_ts:
+        return warning_ts
+
+    trigger_ts = [int(s["t"]) for s in steps if bool(s.get("triggered", False))]
+    if trigger_ts:
+        return trigger_ts
+
+    return [int(s["t"]) for s in steps if abs(float(s.get("coef", 0.0))) > 1e-9]
 
 
 def compute_metrics(log_path: Path, k: int) -> Metrics:
     y_true_all: List[int] = []
     y_score_all: List[float] = []
+    y_true_baseline: List[int] = []
+    y_score_baseline: List[float] = []
     lead_times: List[float] = []
     coef_nonzero = 0
     coef_total = 0
@@ -117,26 +137,41 @@ def compute_metrics(log_path: Path, k: int) -> Metrics:
             y = ((failure_t - ts) <= k) & ((failure_t - ts) >= 0)
             y_true_all.extend(y.astype(np.int32).tolist())
             y_score_all.extend(risk.tolist())
+            baseline_scores = [s.get("baseline_uncertainty", None) for s in steps]
+            for label, score in zip(y.astype(np.int32).tolist(), baseline_scores):
+                if score is None:
+                    continue
+                y_true_baseline.append(int(label))
+                y_score_baseline.append(float(score))
 
             # Lead time is measured from the first monitor event that fired.
             # For warning-only runs, this comes from warning_triggered rather than closed-loop triggered.
-            trig_ts = [
-                int(s["t"])
-                for s in steps
-                if bool(s.get("triggered", False)) or bool(s.get("warning_triggered", False))
-            ]
+            trig_ts = _trigger_times(steps)
             if trig_ts:
                 lead_times.append(float(failure_t - min(trig_ts)))
 
     y_true = np.array(y_true_all, dtype=np.int32)
     y_score = np.array(y_score_all, dtype=np.float32)
+    y_true_base = np.array(y_true_baseline, dtype=np.int32)
+    y_score_base = np.array(y_score_baseline, dtype=np.float32)
 
     auroc = _auc_roc(y_true, y_score) if len(y_true) else float("nan")
     auprc = _auc_pr(y_true, y_score) if len(y_true) else float("nan")
+    baseline_auroc = _auc_roc(y_true_base, y_score_base) if len(y_true_base) else float("nan")
+    baseline_auprc = _auc_pr(y_true_base, y_score_base) if len(y_true_base) else float("nan")
     mean_lead = float(np.mean(lead_times)) if lead_times else float("nan")
     intervention_rate = float(coef_nonzero / max(coef_total, 1))
 
-    return Metrics(auroc=auroc, auprc=auprc, mean_lead=mean_lead, intervention_rate=intervention_rate, warning_rate=warning_active_steps/max(warning_total_steps,1), warning_triggers_per_ep=warning_triggers/max(episodes_with_steps,1))
+    return Metrics(
+        auroc=auroc,
+        auprc=auprc,
+        mean_lead=mean_lead,
+        intervention_rate=intervention_rate,
+        warning_rate=warning_active_steps / max(warning_total_steps, 1),
+        warning_triggers_per_ep=warning_triggers / max(episodes_with_steps, 1),
+        baseline_auroc=baseline_auroc,
+        baseline_auprc=baseline_auprc,
+    )
 
 
 def main() -> None:
@@ -153,6 +188,9 @@ def main() -> None:
     print(f"Intervention rate (non-zero coef): {m.intervention_rate:.4f}")
     print(f"Warning-active rate: {m.warning_rate:.4f}")
     print(f"Warning triggers / episode: {m.warning_triggers_per_ep:.4f}")
+    if not np.isnan(m.baseline_auroc) or not np.isnan(m.baseline_auprc):
+        print(f"Uncertainty baseline AUROC (fail within K): {m.baseline_auroc:.4f}")
+        print(f"Uncertainty baseline AUPRC (fail within K): {m.baseline_auprc:.4f}")
 
 
 if __name__ == "__main__":

@@ -81,6 +81,48 @@ def _failure_event_to_dict(failure_event) -> Optional[dict]:
     return {"repr": repr(failure_event)}
 
 
+def _jitter_image(img: np.ndarray, rng: np.random.Generator, std: float) -> np.ndarray:
+    noise = rng.normal(loc=0.0, scale=255.0 * std, size=img.shape)
+    return np.clip(img.astype(np.float32) + noise, 0, 255).astype(np.uint8)
+
+
+def _action_disagreement_uncertainty(
+    model,
+    processor,
+    cfg: RunConfig,
+    observation: dict,
+    task_description: str,
+    cfg_unnorm_key: str,
+    rng: np.random.Generator,
+    num_samples: int,
+    jitter_std: float,
+) -> float:
+    acts = []
+    base_img = observation["full_image"]
+    base_state = observation["state"]
+
+    for _ in range(max(1, num_samples)):
+        obs2 = {
+            "full_image": _jitter_image(base_img, rng, jitter_std),
+            "state": base_state,
+        }
+        action = get_action(
+            model,
+            processor,
+            cfg,
+            obs2,
+            task_description,
+            unnorm_key=cfg_unnorm_key,
+        )
+        action = normalize_gripper_action(action, binarize=True)
+        if cfg.model.family == "openvla":
+            action = invert_gripper_action(action)
+        acts.append(np.asarray(action, dtype=np.float32))
+
+    act_arr = np.stack(acts, axis=0)
+    return float(np.mean(np.var(act_arr, axis=0)))
+
+
 def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
     set_seed_everywhere(cfg.env.seed)
     rng = np.random.default_rng(cfg.env.seed)
@@ -282,6 +324,7 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
             log_file.write(f"Starting episode {task_episodes + 1}...\n")
 
             current_episode_actions = []
+            last_action = None
 
             if controller is not None:
                 controller.reset()
@@ -333,6 +376,21 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
                             )
                         ),
                     }
+
+                    baseline_uncertainty = None
+                    if (cfg.monitor.uncertainty_baseline or "none").lower() == "action_disagreement":
+                        ub_rng = make_step_rng(cfg.env.seed + 17, task_id, episode_idx, t)
+                        baseline_uncertainty = _action_disagreement_uncertainty(
+                            model=model,
+                            processor=processor,
+                            cfg=cfg,
+                            observation=observation,
+                            task_description=task_description,
+                            cfg_unnorm_key=cfg_unnorm_key,
+                            rng=ub_rng,
+                            num_samples=int(cfg.monitor.uncertainty_num_samples),
+                            jitter_std=float(cfg.monitor.uncertainty_jitter_std),
+                        )
 
                     risk = 0.0
                     triggered = False
@@ -392,10 +450,32 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
                                 (),
                                 {"failure_type": "aborted_by_warning", "t": int(t)},
                             )()
+                            if cfg.monitor.enabled:
+                                ep_log.steps.append(
+                                    MonitorLogStep(
+                                        t=int(t),
+                                        risk=float(risk),
+                                        coef=float(coef_ref.value),
+                                        triggered=bool(triggered),
+                                        warning_active=bool(warning_active),
+                                        warning_triggered=bool(warning_triggered),
+                                        baseline_uncertainty=(
+                                            float(baseline_uncertainty)
+                                            if baseline_uncertainty is not None
+                                            else None
+                                        ),
+                                    )
+                                )
                             break
+                        elif pol == "hold_last":
+                            if last_action is not None:
+                                action = last_action.copy()
+                            else:
+                                action = np.asarray(get_libero_dummy_action(), dtype=np.float32)
 
                     obs, reward, done, info = env.step(action.tolist())
                     current_episode_actions.append(action.tolist())
+                    last_action = np.asarray(action, dtype=np.float32).copy()
 
                     if failure_event is None:
                         failure_event = fdet.step(t=t, obs=obs, task_description=task_description)
@@ -409,6 +489,9 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
                                 triggered=bool(triggered),
                                 warning_active=bool(warning_active),
                                 warning_triggered=bool(warning_triggered),
+                                baseline_uncertainty=(
+                                    float(baseline_uncertainty) if baseline_uncertainty is not None else None
+                                ),
                             )
                         )
 

@@ -182,6 +182,7 @@ class MonitorLogStep:
     triggered: bool
     warning_active: bool = False
     warning_triggered: bool = False
+    baseline_uncertainty: Optional[float] = None
 
 
 @dataclass
@@ -209,6 +210,9 @@ class MonitorEpisodeLog:
                     "triggered": bool(s.triggered),
                     "warning_active": bool(s.warning_active),
                     "warning_triggered": bool(s.warning_triggered),
+                    "baseline_uncertainty": (
+                        float(s.baseline_uncertainty) if s.baseline_uncertainty is not None else None
+                    ),
                 }
                 for s in self.steps
             ],

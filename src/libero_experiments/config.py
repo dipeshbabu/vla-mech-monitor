@@ -98,11 +98,16 @@ class MonitorConfig:
     sign: int = -1
 
     # Using the risk signal as uncertainty / OOD warning (no model edits).
-    warning_policy: Literal["none", "noop", "abort_episode"] = "none"
+    warning_policy: Literal["none", "noop", "abort_episode", "hold_last"] = "none"
     warning_tau: float = 0.0
     warning_patience: int = 1
     warning_duration: int = 1
     warning_cooldown: int = 0
+
+    # Lightweight uncertainty baseline using action disagreement under small image jitters.
+    uncertainty_baseline: Literal["none", "action_disagreement"] = "none"
+    uncertainty_num_samples: int = 3
+    uncertainty_jitter_std: float = 0.02
 
     # logging
     save_monitor_csv: bool = True

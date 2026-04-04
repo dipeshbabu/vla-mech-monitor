@@ -88,7 +88,8 @@ Key settings:
 - deterministic visual occlusion
 - one activation-based monitor
 - `control_mode=none` for the proposal-consistent runs
-- optional `warning_policy=noop` for the warning wrapper
+- warning policies: `none`, `noop`, `abort_episode`, `hold_last`
+- optional action-disagreement uncertainty baseline
 
 ## Main Commands
 
@@ -180,7 +181,7 @@ PY
 export WARNING_TAU=$(cat "$CLEAN_BASE/warning_tau.txt")
 ```
 
-### Occluded plus warning
+### Occluded + warning
 
 ```bash
 python scripts/run_eval.py \
@@ -201,7 +202,49 @@ python scripts/run_eval.py \
   --override monitor.nearmiss.visual.strength=0.35
 ```
 
-### Clean plus warning
+### Occluded + abort warning
+
+```bash
+python scripts/run_eval.py \
+  --config configs/warning_noop.yaml \
+  --override logging.run_name=occluded_abort_warning_run \
+  --override env.selected_task_ids='[0,1,2,3,4]' \
+  --override env.num_trials_per_task=20 \
+  --override monitor.control_mode=none \
+  --override monitor.direction_path="$FIT_RUN/failure_direction.npy" \
+  --override monitor.warning_policy=abort_episode \
+  --override monitor.warning_tau="$WARNING_TAU" \
+  --override monitor.warning_patience=2 \
+  --override monitor.warning_duration=3 \
+  --override monitor.warning_cooldown=5 \
+  --override monitor.nearmiss.enabled=true \
+  --override monitor.nearmiss.visual.enabled=true \
+  --override 'monitor.nearmiss.visual.kinds=[occlusion]' \
+  --override monitor.nearmiss.visual.strength=0.35
+```
+
+### Occluded + hold-last warning
+
+```bash
+python scripts/run_eval.py \
+  --config configs/warning_noop.yaml \
+  --override logging.run_name=occluded_holdlast_warning_run \
+  --override env.selected_task_ids='[0,1,2,3,4]' \
+  --override env.num_trials_per_task=20 \
+  --override monitor.control_mode=none \
+  --override monitor.direction_path="$FIT_RUN/failure_direction.npy" \
+  --override monitor.warning_policy=hold_last \
+  --override monitor.warning_tau="$WARNING_TAU" \
+  --override monitor.warning_patience=2 \
+  --override monitor.warning_duration=3 \
+  --override monitor.warning_cooldown=5 \
+  --override monitor.nearmiss.enabled=true \
+  --override monitor.nearmiss.visual.enabled=true \
+  --override 'monitor.nearmiss.visual.kinds=[occlusion]' \
+  --override monitor.nearmiss.visual.strength=0.35
+```
+
+### Clean + warning
 
 ```bash
 python scripts/run_eval.py \
@@ -220,6 +263,26 @@ python scripts/run_eval.py \
   --override monitor.nearmiss.visual.enabled=false
 ```
 
+### Occluded baseline with uncertainty baseline
+
+```bash
+python scripts/run_eval.py \
+  --config configs/warning_noop.yaml \
+  --override logging.run_name=occluded_uncertainty_base_run \
+  --override env.selected_task_ids='[0,1,2,3,4]' \
+  --override env.num_trials_per_task=20 \
+  --override monitor.control_mode=none \
+  --override monitor.warning_policy=none \
+  --override monitor.direction_path="$FIT_RUN/failure_direction.npy" \
+  --override monitor.uncertainty_baseline=action_disagreement \
+  --override monitor.uncertainty_num_samples=3 \
+  --override monitor.uncertainty_jitter_std=0.02 \
+  --override monitor.nearmiss.enabled=true \
+  --override monitor.nearmiss.visual.enabled=true \
+  --override 'monitor.nearmiss.visual.kinds=[occlusion]' \
+  --override monitor.nearmiss.visual.strength=0.35
+```
+
 ## Offline Evaluation
 
 ```bash
@@ -236,6 +299,7 @@ This reports:
 - intervention rate
 - warning-active rate
 - warning triggers per episode
+- optional uncertainty-baseline AUROC/AUPRC when `monitor.uncertainty_baseline` is enabled
 
 ## Extra Utilities
 
@@ -287,6 +351,8 @@ Common files:
 - Use `monitor.control_mode=none` for the main paper runs.
 - Fit the failure direction on the occluded fit run, not on warning-enabled runs.
 - Keep clean threshold calibration separate from occluded evaluation.
+- For warning-policy comparisons, reuse the same fitted direction and clean-calibrated `WARNING_TAU`.
+- For the uncertainty baseline, enable `monitor.uncertainty_baseline=action_disagreement` and compare its AUROC/AUPRC against the activation-risk monitor.
 - `run_debug.sh` is the small version of the full workflow.
 
 ## Attribution
