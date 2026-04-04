@@ -33,3 +33,6 @@ utils/libero_datasets/
 # Test and cache directories
 .pytest_cache/
 .mypy_cache/
+
+# Local scratch directories
+.probe_test_tmp/

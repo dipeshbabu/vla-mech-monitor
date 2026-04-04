@@ -13,6 +13,7 @@ dependencies:
   - imageio
   - opencv
   - pillow
+  - scikit-learn
   - wandb
   - pytorch=2.2.0
   - pytorch-cuda=12.1

@@ -87,7 +87,7 @@ def _trigger_times(steps: List[dict]) -> List[int]:
     return [int(s["t"]) for s in steps if abs(float(s.get("coef", 0.0))) > 1e-9]
 
 
-def compute_metrics(log_path: Path, k: int) -> Metrics:
+def compute_metrics(log_path: Path, k: int, include_success_episodes: bool = False) -> Metrics:
     y_true_all: List[int] = []
     y_score_all: List[float] = []
     y_true_baseline: List[int] = []
@@ -123,32 +123,34 @@ def compute_metrics(log_path: Path, k: int) -> Metrics:
                 if abs(float(s.get("coef", 0.0))) > 1e-9:
                     coef_nonzero += 1
 
-            if failure_t is None:
-                continue
-
-            # per-step labels: fail within next K steps (only for episodes that fail or timeout)
-            if success is True:
-                continue  # no failure; skip from predictive eval
-
             # build arrays aligned to steps
             ts = np.array([int(s["t"]) for s in steps], dtype=np.int32)
             risk = np.array([float(s["risk"]) for s in steps], dtype=np.float32)
-            # label step t as 1 if failure_t - t <= k and failure_t >= t
-            y = ((failure_t - ts) <= k) & ((failure_t - ts) >= 0)
-            y_true_all.extend(y.astype(np.int32).tolist())
-            y_score_all.extend(risk.tolist())
-            baseline_scores = [s.get("baseline_uncertainty", None) for s in steps]
-            for label, score in zip(y.astype(np.int32).tolist(), baseline_scores):
-                if score is None:
-                    continue
-                y_true_baseline.append(int(label))
-                y_score_baseline.append(float(score))
+            should_score = failure_t is not None and success is not True
+            if include_success_episodes and success is True:
+                should_score = True
+
+            if should_score:
+                if failure_t is None:
+                    y = np.zeros_like(ts, dtype=np.int32)
+                else:
+                    # label step t as 1 if failure_t - t <= k and failure_t >= t
+                    y = (((failure_t - ts) <= k) & ((failure_t - ts) >= 0)).astype(np.int32)
+                y_true_all.extend(y.astype(np.int32).tolist())
+                y_score_all.extend(risk.tolist())
+                baseline_scores = [s.get("baseline_uncertainty", None) for s in steps]
+                for label, score in zip(y.astype(np.int32).tolist(), baseline_scores):
+                    if score is None:
+                        continue
+                    y_true_baseline.append(int(label))
+                    y_score_baseline.append(float(score))
 
             # Lead time is measured from the first monitor event that fired.
             # For warning-only runs, this comes from warning_triggered rather than closed-loop triggered.
-            trig_ts = _trigger_times(steps)
-            if trig_ts:
-                lead_times.append(float(failure_t - min(trig_ts)))
+            if failure_t is not None:
+                trig_ts = _trigger_times(steps)
+                if trig_ts:
+                    lead_times.append(float(failure_t - min(trig_ts)))
 
     y_true = np.array(y_true_all, dtype=np.int32)
     y_score = np.array(y_score_all, dtype=np.float32)
@@ -178,10 +180,23 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--log", type=str, required=True, help="Path to monitor_rollouts.jsonl")
     ap.add_argument("--k", type=int, default=25, help="Lead window K steps")
+    ap.add_argument(
+        "--include-success-episodes",
+        action="store_true",
+        help="Include successful episodes as negative examples in AUROC/AUPRC computation",
+    )
     args = ap.parse_args()
 
-    m = compute_metrics(Path(args.log), k=int(args.k))
+    m = compute_metrics(
+        Path(args.log),
+        k=int(args.k),
+        include_success_episodes=bool(args.include_success_episodes),
+    )
     print("Monitor metrics")
+    if args.include_success_episodes:
+        print("Evaluation scope: all episodes (successes included as negatives)")
+    else:
+        print("Evaluation scope: failure/timeout episodes only")
     print(f"AUROC (fail within K): {m.auroc:.4f}")
     print(f"AUPRC (fail within K): {m.auprc:.4f}")
     print(f"Mean lead time (trigger -> fail): {m.mean_lead:.2f} steps")

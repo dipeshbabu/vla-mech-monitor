@@ -44,11 +44,13 @@ from libero_experiments.model import get_action, get_processor, load_model
 from libero_experiments.monitoring import (
     ClosedLoopController,
     DirectionMonitor,
+    LogisticProbeMonitor,
     MonitorEpisodeLog,
     MonitorLogStep,
     WarningController,
     apply_control_to_intervention_dict,
     load_direction,
+    load_probe,
 )
 from libero_experiments.nearmiss import sample_nearmiss_variant
 from libero_experiments.perturbations import apply_visual_perturbation, make_step_rng
@@ -241,16 +243,23 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
     cap = None
     if cfg.monitor.enabled:
         cap = ActivationCapture(MonitorSite(layer=int(cfg.monitor.layer), site=str(cfg.monitor.site)))
+        monitor = None
+        predictor_type = (getattr(cfg.monitor, "predictor_type", "direction") or "direction").lower()
+        if predictor_type not in ("direction", "logreg"):
+            raise ValueError(f"Unknown predictor_type: {predictor_type}")
+        predictor_path = getattr(cfg.monitor, "predictor_path", None)
+        if predictor_path in (None, "", "null", "None") and predictor_type == "direction":
+            predictor_path = getattr(cfg.monitor, "direction_path", None)
+        if predictor_type == "logreg" and predictor_path in (None, "", "null", "None"):
+            raise ValueError("monitor.predictor_type=logreg requires monitor.predictor_path")
 
-        if cfg.monitor.direction_path:
-            direction = None
-            direction_path = getattr(cfg.monitor, "direction_path", None)
-
-            if direction_path not in (None, "", "null", "None"):
-                direction = load_direction(direction_path)
-            monitor = None
-            if direction is not None:
+        if predictor_path not in (None, "", "null", "None"):
+            if predictor_type == "direction":
+                direction = load_direction(predictor_path)
                 monitor = DirectionMonitor(direction=direction, agg=cfg.monitor.agg, normalize=True)
+            elif predictor_type == "logreg":
+                w, b = load_probe(predictor_path)
+                monitor = LogisticProbeMonitor(w=w, b=b)
 
         if monitor is not None and cfg.intervention.enabled:
             controller = ClosedLoopController(

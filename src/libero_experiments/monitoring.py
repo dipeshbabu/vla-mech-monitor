@@ -24,6 +24,22 @@ def load_direction(path: str) -> np.ndarray:
     return v / n
 
 
+def load_probe(path: str) -> tuple[np.ndarray, float]:
+    """Load a saved logistic probe from a .npy file."""
+    obj = np.load(path, allow_pickle=True)
+    if isinstance(obj, np.ndarray) and obj.shape == ():
+        obj = obj.item()
+    if not isinstance(obj, dict):
+        raise ValueError(f"Expected probe file to contain a dict, got {type(obj)}")
+    if "w" not in obj or "b" not in obj:
+        raise ValueError("Probe file must contain keys 'w' and 'b'")
+    w = np.asarray(obj["w"], dtype=np.float32)
+    b = float(obj["b"])
+    if w.ndim != 1:
+        raise ValueError(f"Probe weights must be 1D, got shape {w.shape}")
+    return w, b
+
+
 @dataclass
 class DirectionMonitor:
     """Fast risk signal using a fixed direction vector.
@@ -55,6 +71,33 @@ class DirectionMonitor:
                 return float(np.max(projs))
             return float(np.mean(projs))
         raise ValueError(f"acts must be 1D or 2D, got shape={x.shape}")
+
+
+@dataclass
+class LogisticProbeMonitor:
+    """Risk signal from a trained linear logistic regression probe."""
+
+    w: np.ndarray
+    b: float
+
+    def __post_init__(self) -> None:
+        self.w = np.asarray(self.w, dtype=np.float32)
+        if self.w.ndim != 1:
+            raise ValueError(f"Probe weights must be 1D, got {self.w.shape}")
+        self.b = float(self.b)
+
+    def score(self, acts: np.ndarray) -> float:
+        x = np.asarray(acts, dtype=np.float32)
+        if x.ndim == 2:
+            x = np.mean(x, axis=0)
+        if x.ndim != 1:
+            raise ValueError(f"acts must be 1D or 2D, got shape={x.shape}")
+        z = float(np.dot(x, self.w) + self.b)
+        if z >= 0:
+            ez = np.exp(-z)
+            return float(1.0 / (1.0 + ez))
+        ez = np.exp(z)
+        return float(ez / (1.0 + ez))
 
 
 @dataclass

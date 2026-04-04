@@ -86,6 +86,8 @@ class MonitorConfig:
 
     # direction monitor
     direction_path: Optional[str] = None  # .npy vector
+    predictor_type: Literal["direction", "logreg"] = "direction"
+    predictor_path: Optional[str] = None
     agg: Literal["mean", "max"] = "mean"
 
     # closed-loop controller params
