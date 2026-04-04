@@ -43,12 +43,12 @@ From repo root:
 ```bash
 conda env create -f setup/environment.openvla.yml
 conda activate openvla-interp
-pip install -e .
+python -m pip install -e .
 ```
 
 Dependency ownership is split intentionally:
 - `setup/environment.openvla.yml` installs the Conda-managed base stack: Python, NumPy, PyTorch, CUDA, and torchvision.
-- `pip install -e .` installs the repo's pinned runtime Python dependencies from `pyproject.toml`.
+- `python -m pip install -e .` installs the repo's pinned runtime Python dependencies from `pyproject.toml`.
 
 For cluster installs, use strict channel priority before creating the environment:
 
@@ -62,7 +62,7 @@ Bootstrap LIBERO config plus assets and datasets:
 bash setup/setup.sh
 ```
 
-`setup/setup.sh` also re-runs `pip install -e .` inside `openvla-interp` before writing LIBERO config or downloading assets.
+`setup/setup.sh` also re-runs `python -m pip install -e .` inside `openvla-interp` before writing LIBERO config or downloading assets.
 
 Verify the environment and core imports:
 
@@ -79,7 +79,7 @@ SKIP_LIBERO_DOWNLOADS=1 bash setup/setup.sh
 If your machine and CUDA toolchain support FlashAttention, install it as an optional extra:
 
 ```bash
-pip install flash-attn==2.5.5
+python -m pip install flash-attn==2.5.5
 ```
 
 Set the LIBERO path from repo root:
