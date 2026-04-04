@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from importlib import metadata
 import sys
 from pathlib import Path
 
@@ -21,7 +22,6 @@ DEPENDENCY_IMPORTS = [
     "sklearn",
     "torch",
     "torchvision",
-    "torchaudio",
     "transformers",
     "accelerate",
     "huggingface_hub",
@@ -40,6 +40,30 @@ REPO_IMPORTS = [
     "libero_experiments.model",
     "libero_experiments.eval_libero",
 ]
+
+EXPECTED_DISTRIBUTION_VERSIONS = {
+    "numpy": "1.26.4",
+    "imageio": "2.37.0",
+    "imageio-ffmpeg": "0.6.0",
+    "Pillow": "10.3.0",
+    "PyYAML": "6.0.3",
+    "scikit-learn": "1.4.2",
+    "tqdm": "4.67.1",
+    "torch": "2.2.0",
+    "torchvision": "0.17.0",
+    "transformers": "4.40.1",
+    "tokenizers": "0.19.1",
+    "timm": "0.9.16",
+    "accelerate": "0.30.1",
+    "huggingface-hub": "0.23.2",
+    "libero": "0.1.1",
+    "robosuite": "1.4.0",
+    "bddl": "1.0.1",
+    "easydict": "1.9",
+    "cloudpickle": "2.1.0",
+    "gym": "0.25.2",
+    "mujoco": "3.1.6",
+}
 
 
 def _check_imports(module_names: list[str]) -> list[str]:
@@ -90,11 +114,26 @@ def _run_local_smoke_checks() -> list[str]:
     return failures
 
 
+def _check_versions() -> list[str]:
+    failures: list[str] = []
+    for dist_name, expected in EXPECTED_DISTRIBUTION_VERSIONS.items():
+        try:
+            installed = metadata.version(dist_name)
+        except metadata.PackageNotFoundError:
+            failures.append(f"{dist_name}: distribution metadata not found")
+            continue
+        if installed != expected:
+            failures.append(f"{dist_name}: expected {expected}, found {installed}")
+    return failures
+
+
 def main() -> int:
     failures: list[str] = []
     failures.extend(_check_imports(DEPENDENCY_IMPORTS))
     failures.extend(_check_imports(REPO_IMPORTS))
 
+    if not failures:
+        failures.extend(_check_versions())
     if not failures:
         failures.extend(_run_local_smoke_checks())
 

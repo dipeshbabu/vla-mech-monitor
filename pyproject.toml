@@ -15,8 +15,24 @@ authors = [
 license = { text = "MIT" }
 dependencies = [
   "numpy==1.26.4",
-  "pyyaml",
-  "tqdm",
+  "imageio==2.37.0",
+  "imageio-ffmpeg==0.6.0",
+  "pillow==10.3.0",
+  "pyyaml==6.0.3",
+  "scikit-learn==1.4.2",
+  "tqdm==4.67.1",
+  "transformers==4.40.1",
+  "tokenizers==0.19.1",
+  "timm==0.9.16",
+  "accelerate==0.30.1",
+  "huggingface_hub==0.23.2",
+  "libero==0.1.1",
+  "robosuite==1.4.0",
+  "bddl==1.0.1",
+  "easydict==1.9",
+  "cloudpickle==2.1.0",
+  "gym==0.25.2",
+  "mujoco==3.1.6",
 ]
 
 [tool.setuptools]

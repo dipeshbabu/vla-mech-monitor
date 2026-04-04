@@ -46,6 +46,8 @@ conda activate openvla-interp
 pip install -e .
 ```
 
+`pip install -e .` installs the repo's runtime Python dependencies. The Conda env is mainly for Python and the PyTorch/CUDA stack.
+
 For cluster installs, use strict channel priority before creating the environment:
 
 ```bash
@@ -57,6 +59,8 @@ Bootstrap LIBERO config plus assets and datasets:
 ```bash
 bash setup/setup.sh
 ```
+
+`setup/setup.sh` also re-runs `pip install -e .` inside `openvla-interp` before writing LIBERO config or downloading assets.
 
 Verify the environment and core imports:
 
