@@ -135,7 +135,7 @@ All commands below are run from repo root.
 
 ### Automated runners
 
-Full workflow with default settings:
+Full workflow sweep with default settings:
 
 ```bash
 bash run_all.sh
@@ -147,7 +147,15 @@ Fast debug workflow:
 bash run_debug.sh
 ```
 
-The runners support environment overrides for predictor and layer selection:
+`run_all.sh` now sweeps combinations by default:
+
+- `MONITOR_LAYERS=16 24`
+- `PREDICTOR_TYPES=direction logreg`
+- `WARNING_POLICIES=none noop abort_episode hold_last`
+
+The expensive fit and baseline stages run once per `(layer, predictor)` pair, and the warning runs fan out over policies.
+
+You can still narrow the sweep with environment overrides:
 
 ```bash
 MONITOR_LAYER=16 PREDICTOR_TYPE=logreg WARNING_POLICY=noop bash run_all.sh
@@ -160,12 +168,15 @@ MONITOR_LAYER=24 PREDICTOR_TYPE=direction RUN_TAG=layer24_direction bash run_deb
 Useful runner environment variables:
 
 - `MONITOR_LAYER`
+- `MONITOR_LAYERS`
 - `PREDICTOR_TYPE` with values `direction` or `logreg`
+- `PREDICTOR_TYPES`
 - `WARNING_POLICY` with values `none`, `noop`, `abort_episode`, or `hold_last`
+- `WARNING_POLICIES`
 - `TASK_IDS`
 - `TRIALS`
 - `OCC_STRENGTH`
-- `RUN_TAG`
+- `RUN_TAG_PREFIX`
 
 ### Occluded fit run
 
