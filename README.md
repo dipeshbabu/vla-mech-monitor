@@ -46,7 +46,9 @@ conda activate openvla-interp
 pip install -e .
 ```
 
-`pip install -e .` installs the repo's runtime Python dependencies. The Conda env is mainly for Python and the PyTorch/CUDA stack.
+Dependency ownership is split intentionally:
+- `setup/environment.openvla.yml` installs the Conda-managed base stack: Python, NumPy, PyTorch, CUDA, and torchvision.
+- `pip install -e .` installs the repo's pinned runtime Python dependencies from `pyproject.toml`.
 
 For cluster installs, use strict channel priority before creating the environment:
 
