@@ -1,10 +1,10 @@
 """Model loading and action inference."""
 
 import json
+from pathlib import Path
 from typing import Any
 
 import numpy as np
-import tensorflow as tf
 import torch
 from PIL import Image
 from transformers import AutoModelForVision2Seq, AutoProcessor
@@ -13,6 +13,7 @@ from libero_experiments.utils import DEVICE, OPENVLA_V01_SYSTEM_PROMPT
 
 
 ACTION_DIM = 7
+LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
 
 
 def load_model(cfg: Any):
@@ -64,11 +65,11 @@ def load_model(cfg: Any):
     if not cfg.model.load_in_8bit and not cfg.model.load_in_4bit:
         model = model.to(DEVICE)
 
-    dataset_statistics_path = f"{cfg.model.checkpoint}/dataset_statistics.json"
+    dataset_statistics_path = Path(cfg.model.checkpoint) / "dataset_statistics.json"
     if torch.cuda.is_available():
         torch.cuda.synchronize()
-    if tf.io.gfile.exists(dataset_statistics_path):
-        with tf.io.gfile.GFile(dataset_statistics_path, "r") as f:
+    if dataset_statistics_path.exists():
+        with dataset_statistics_path.open("r", encoding="utf-8") as f:
             norm_stats = json.load(f)
         model.norm_stats = norm_stats
     else:
@@ -86,28 +87,14 @@ def get_processor(cfg: Any):
     return AutoProcessor.from_pretrained(cfg.model.checkpoint, trust_remote_code=True)
 
 
-def crop_and_resize(image: tf.Tensor, crop_scale: float, batch_size: int) -> tf.Tensor:
-    assert image.shape.ndims == 3 or image.shape.ndims == 4
-    expanded_dims = False
-    if image.shape.ndims == 3:
-        image = tf.expand_dims(image, axis=0)
-        expanded_dims = True
-
-    new_heights = tf.reshape(tf.clip_by_value(tf.sqrt(crop_scale), 0, 1), shape=(batch_size,))
-    new_widths = tf.reshape(tf.clip_by_value(tf.sqrt(crop_scale), 0, 1), shape=(batch_size,))
-
-    height_offsets = (1 - new_heights) / 2
-    width_offsets = (1 - new_widths) / 2
-    bounding_boxes = tf.stack(
-        [height_offsets, width_offsets, height_offsets + new_heights, width_offsets + new_widths], axis=1
-    )
-
-    image = tf.image.crop_and_resize(image, bounding_boxes, tf.range(batch_size), (224, 224))
-
-    if expanded_dims:
-        image = image[0]
-
-    return image
+def crop_and_resize(image: Image.Image, crop_scale: float, size: tuple[int, int] = (224, 224)) -> Image.Image:
+    width, height = image.size
+    scale = float(np.clip(np.sqrt(crop_scale), 0.0, 1.0))
+    crop_width = max(1, int(round(width * scale)))
+    crop_height = max(1, int(round(height * scale)))
+    left = max(0, (width - crop_width) // 2)
+    top = max(0, (height - crop_height) // 2)
+    return image.crop((left, top, left + crop_width, top + crop_height)).resize(size, LANCZOS)
 
 
 def _build_prompt(task_label: str, checkpoint: str) -> str:
@@ -120,15 +107,7 @@ def get_action(model, processor, cfg: Any, obs: dict, task_label: str, unnorm_ke
     image = Image.fromarray(obs["full_image"]).convert("RGB")
 
     if cfg.model.center_crop:
-        batch_size = 1
-        crop_scale = 0.9
-        image_tf = tf.convert_to_tensor(np.array(image))
-        orig_dtype = image_tf.dtype
-        image_tf = tf.image.convert_image_dtype(image_tf, tf.float32)
-        image_tf = crop_and_resize(image_tf, crop_scale, batch_size)
-        image_tf = tf.clip_by_value(image_tf, 0, 1)
-        image_tf = tf.image.convert_image_dtype(image_tf, orig_dtype, saturate=True)
-        image = Image.fromarray(image_tf.numpy()).convert("RGB")
+        image = crop_and_resize(image, crop_scale=0.9)
 
     prompt = _build_prompt(task_label, cfg.model.checkpoint)
     inputs = processor(prompt, image).to(DEVICE, dtype=torch.bfloat16)

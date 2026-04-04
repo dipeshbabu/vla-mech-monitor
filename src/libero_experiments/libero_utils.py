@@ -6,11 +6,14 @@ from typing import Tuple
 
 import imageio
 import numpy as np
-import tensorflow as tf
+from PIL import Image
 from libero.libero import get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
 
 from libero_experiments.utils import DATE, DATE_TIME
+
+
+LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
 
 
 def get_libero_env(task, resolution: int = 256):
@@ -27,11 +30,8 @@ def get_libero_dummy_action() -> list:
 
 
 def resize_image(img: np.ndarray, resize_size: Tuple[int, int]) -> np.ndarray:
-    img = tf.image.encode_jpeg(img)
-    img = tf.io.decode_image(img, expand_animations=False, dtype=tf.uint8)
-    img = tf.image.resize(img, resize_size, method="lanczos3", antialias=True)
-    img = tf.cast(tf.clip_by_value(tf.round(img), 0, 255), tf.uint8)
-    return img.numpy()
+    height, width = resize_size
+    return np.asarray(Image.fromarray(img).resize((width, height), LANCZOS), dtype=np.uint8)
 
 
 def get_libero_image(obs: dict, resize_size: int | Tuple[int, int]) -> np.ndarray:

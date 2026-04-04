@@ -44,7 +44,36 @@ From repo root:
 conda env create -f setup/environment.openvla.yml
 conda activate openvla-interp
 pip install -e .
+```
+
+For cluster installs, use strict channel priority before creating the environment:
+
+```bash
+conda config --set channel_priority strict
+```
+
+Bootstrap LIBERO config plus assets and datasets:
+
+```bash
 bash setup/setup.sh
+```
+
+Verify the environment and core imports:
+
+```bash
+python scripts/verify_install.py
+```
+
+If you are on a cluster and want to avoid the large LIBERO downloads during initial setup, write only the config and reuse shared assets later:
+
+```bash
+SKIP_LIBERO_DOWNLOADS=1 bash setup/setup.sh
+```
+
+If your machine and CUDA toolchain support FlashAttention, install it as an optional extra:
+
+```bash
+pip install flash-attn==2.5.5
 ```
 
 Set the LIBERO path from repo root:
@@ -71,8 +100,9 @@ Use exactly one of those rendering setups for a shell session. `egl` is the pref
 
 Notes:
 
-- `flash-attn==2.5.5` is included for OpenVLA; if it is unavailable, OpenVLA automatically falls back to `sdpa`.
-- `setup/setup.sh` writes a `LIBERO_CONFIG_PATH` config under `utils/libero_config/` and downloads LIBERO assets to `utils/libero_assets/` plus `libero_10` datasets to `utils/libero_datasets/`.
+- `setup/environment.openvla.yml` is trimmed to the packages used by this repo so cluster solves are faster and less fragile.
+- `flash-attn==2.5.5` is optional; if it is unavailable, OpenVLA automatically falls back to `sdpa`.
+- `setup/setup.sh` writes a `LIBERO_CONFIG_PATH` config under `utils/libero_config/` and downloads LIBERO assets to `utils/libero_assets/` plus `libero_10` datasets to `utils/libero_datasets/`. Set `SKIP_LIBERO_DOWNLOADS=1` to skip those downloads during bootstrap.
 - Set `LIBERO_CONFIG_PATH=utils/libero_config` when running OpenVLA LIBERO evaluations.
 
 ## Main Config
