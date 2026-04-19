@@ -215,6 +215,124 @@ python scripts/fit_probe.py \
   --out "$FIT_RUN/failure_probe.npy"
 ```
 
+The probe fitter now standardizes features using the training split only, caps
+training negatives by default, and writes metrics/metadata next to the probe:
+
+```text
+$FIT_RUN/failure_probe.npy
+$FIT_RUN/failure_probe.json
+```
+
+### Task-held-out probe comparison
+
+For the final report, prefer this split over fitting/evaluating on the same
+task mix. The task indices below are the task order in `activation_traces.jsonl`;
+with the standard `env.selected_task_ids='[0,1,2,3,4]'` run, this matches that
+selected task order.
+
+If the held-out probe is weak on the current debug-scale data, regenerate the
+fit run with more informative failures before tuning the model: 5-8 tasks,
+30-50 trials per task, one perturbation type, and an occlusion strength that
+creates failures without making every episode fail immediately.
+
+List the tasks recorded in a fit run:
+
+```bash
+FIT_RUN=logs/occluded_fit_run
+
+python scripts/fit_probe.py \
+  --run-dir "$FIT_RUN" \
+  --list-tasks
+```
+
+Use three train tasks, one validation task, and one held-out test task:
+
+```bash
+FIT_RUN=logs/occluded_fit_run
+TRAIN_TASKS=0,1,2
+VAL_TASKS=3
+TEST_TASKS=4
+SPLIT_TASKS=0,1,2,3,4
+```
+
+Fit the direction baseline on train tasks only:
+
+```bash
+python scripts/fit_direction.py \
+  --run-dir "$FIT_RUN" \
+  --include-task-indices "$TRAIN_TASKS" \
+  --out "$FIT_RUN/failure_direction_train_tasks.npy"
+```
+
+Fit the logistic probe with stricter labels and task holdout:
+
+```bash
+python scripts/fit_probe.py \
+  --run-dir "$FIT_RUN" \
+  --include-task-indices "$SPLIT_TASKS" \
+  --split-mode task_holdout \
+  --val-task-indices "$VAL_TASKS" \
+  --test-task-indices "$TEST_TASKS" \
+  --horizon-k 15 \
+  --negative-gap-mult 3 \
+  --stride 5 \
+  --max-neg-per-pos 3 \
+  --out "$FIT_RUN/failure_probe_task_holdout.npy"
+```
+
+The probe JSON reports train/validation/test AUROC, AUPRC, precision, recall,
+F1, positive rate, and the validation-selected threshold. For the actual online
+warning runs, continue calibrating `monitor.warning_tau` on a separate clean
+baseline run, as shown below.
+
+Evaluate both predictors on the held-out task. If the original fit run used a
+different `env.selected_task_ids` list, use the corresponding LIBERO task id for
+the held-out task here.
+
+```bash
+python scripts/run_eval.py \
+  --config configs/warning_noop.yaml \
+  --override logging.run_name=heldout_direction_baseline_run \
+  --override env.selected_task_ids='[4]' \
+  --override env.num_trials_per_task=20 \
+  --override monitor.layer=16 \
+  --override monitor.predictor_type=direction \
+  --override monitor.predictor_path="$FIT_RUN/failure_direction_train_tasks.npy" \
+  --override monitor.control_mode=none \
+  --override monitor.warning_policy=none \
+  --override monitor.nearmiss.enabled=true \
+  --override monitor.nearmiss.visual.enabled=true \
+  --override 'monitor.nearmiss.visual.kinds=[occlusion]' \
+  --override monitor.nearmiss.visual.strength=0.35
+
+python scripts/monitor_eval.py \
+  --log logs/heldout_direction_baseline_run/monitor_rollouts.jsonl \
+  --k 15 \
+  --include-success-episodes
+```
+
+```bash
+python scripts/run_eval.py \
+  --config configs/warning_noop.yaml \
+  --override logging.run_name=heldout_probe_baseline_run \
+  --override env.selected_task_ids='[4]' \
+  --override env.num_trials_per_task=20 \
+  --override monitor.layer=16 \
+  --override monitor.predictor_type=logreg \
+  --override monitor.predictor_path="$FIT_RUN/failure_probe_task_holdout.npy" \
+  --override monitor.control_mode=none \
+  --override monitor.warning_policy=none \
+  --override monitor.nearmiss.enabled=true \
+  --override monitor.nearmiss.visual.enabled=true \
+  --override 'monitor.nearmiss.visual.kinds=[occlusion]' \
+  --override monitor.nearmiss.visual.strength=0.35
+
+python scripts/monitor_eval.py \
+  --log logs/heldout_probe_baseline_run/monitor_rollouts.jsonl \
+  --k 15 \
+  --include-success-episodes
+```
+
 ### Clean baseline
 
 ```bash
@@ -532,7 +650,9 @@ Common files:
 - `metrics_k15.txt`
 - `metrics_k15_all_eps.txt`
 - `failure_direction.npy`
+- `failure_direction.json`
 - `failure_probe.npy`
+- `failure_probe.json`
 - optional videos and action logs
 
 ## Notes
@@ -540,6 +660,8 @@ Common files:
 - Use `monitor.control_mode=none` for the main paper runs.
 - Fit the failure direction on the occluded fit run, not on warning-enabled runs.
 - Fit the logistic probe on the same occluded fit run if you are doing predictor comparison.
+- For credible probe comparisons, fit the direction on train tasks only and fit the probe with `--split-mode task_holdout`.
+- `failure_probe.npy` can include train-set `mean` and `std`; online `monitor.predictor_type=logreg` applies that normalization automatically.
 - Keep clean threshold calibration separate from occluded evaluation.
 - Existing direction-based runs remain compatible via `monitor.direction_path`, but new predictor comparisons should prefer `monitor.predictor_type` plus `monitor.predictor_path`.
 - For warning-policy comparisons, reuse the same fitted direction and clean-calibrated `WARNING_TAU`.

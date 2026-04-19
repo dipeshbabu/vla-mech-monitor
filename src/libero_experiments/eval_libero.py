@@ -258,8 +258,8 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
                 direction = load_direction(predictor_path)
                 monitor = DirectionMonitor(direction=direction, agg=cfg.monitor.agg, normalize=True)
             elif predictor_type == "logreg":
-                w, b = load_probe(predictor_path)
-                monitor = LogisticProbeMonitor(w=w, b=b)
+                w, b, mean, std, _threshold = load_probe(predictor_path)
+                monitor = LogisticProbeMonitor(w=w, b=b, mean=mean, std=std)
 
         if monitor is not None and cfg.intervention.enabled:
             controller = ClosedLoopController(
@@ -342,6 +342,7 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
             fdet.reset()
 
             episode_activations = []
+            episode_activation_ts = []
 
             ep_log = MonitorEpisodeLog(
                 task_description=task_description,
@@ -420,6 +421,7 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
                         acts = cap.last_activation()
                         if cfg.monitor.save_activation_trace and acts is not None:
                             episode_activations.append(acts.tolist())
+                            episode_activation_ts.append(int(t))
 
                         if acts is not None and monitor is not None:
                             risk = float(monitor.score(acts))
@@ -557,6 +559,7 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
                     "success": bool(done),
                     "failure_type": ep_log.failure_type,
                     "failure_t": ep_log.failure_t,
+                    "activation_ts": episode_activation_ts,
                     "activations": episode_activations,
                 }
                 with open(trace_log_path, "a", encoding="utf-8") as f:

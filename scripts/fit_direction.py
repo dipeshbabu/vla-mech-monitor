@@ -20,13 +20,111 @@ import numpy as np
 
 def _read_jsonl(path: Path) -> List[dict]:
     rows: List[dict] = []
-    with path.open("r", encoding="utf-8") as f:
+    with path.open("r", encoding="utf-8-sig") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             rows.append(json.loads(line))
     return rows
+
+
+def _trace_path(run_dir: Path) -> Path:
+    trace_path = run_dir / "activation_traces.jsonl"
+    legacy_trace_path = run_dir / "monitor_traces.jsonl"
+    if not trace_path.exists() and legacy_trace_path.exists():
+        trace_path = legacy_trace_path
+    if not trace_path.exists():
+        raise FileNotFoundError(f"Missing activation trace file in run dir: {run_dir}")
+    return trace_path
+
+
+def _task_description(row: dict) -> str:
+    return str(row.get("task_description", "unknown"))
+
+
+def _task_inventory(rows: List[dict]) -> List[str]:
+    tasks: List[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        task = _task_description(row)
+        if task not in seen:
+            seen.add(task)
+            tasks.append(task)
+    return tasks
+
+
+def _parse_index_list(raw: str | None) -> set[int]:
+    if raw in (None, ""):
+        return set()
+    out: set[int] = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            lo_s, hi_s = part.split("-", 1)
+            lo = int(lo_s)
+            hi = int(hi_s)
+            out.update(range(lo, hi + 1))
+        else:
+            out.add(int(part))
+    return out
+
+
+def _tasks_from_args(
+    all_tasks: List[str],
+    names: List[str],
+    index_spec: str | None,
+    *,
+    arg_name: str,
+) -> set[str]:
+    selected = set(names)
+    for idx in _parse_index_list(index_spec):
+        if idx < 0 or idx >= len(all_tasks):
+            raise ValueError(f"{arg_name} index {idx} is out of range for {len(all_tasks)} tasks")
+        selected.add(all_tasks[idx])
+    return selected
+
+
+def _filter_traces(
+    traces: List[dict],
+    all_tasks: List[str],
+    include_tasks: List[str],
+    include_task_indices: str | None,
+    exclude_tasks: List[str],
+    exclude_task_indices: str | None,
+) -> List[dict]:
+    include = _tasks_from_args(
+        all_tasks,
+        include_tasks,
+        include_task_indices,
+        arg_name="--include-task-indices",
+    )
+    exclude = _tasks_from_args(
+        all_tasks,
+        exclude_tasks,
+        exclude_task_indices,
+        arg_name="--exclude-task-indices",
+    )
+    out = []
+    for row in traces:
+        task = _task_description(row)
+        if include and task not in include:
+            continue
+        if task in exclude:
+            continue
+        out.append(row)
+    return out
+
+
+def _print_task_inventory(rows: List[dict]) -> None:
+    print("Unique tasks in activation traces:")
+    for idx, task in enumerate(_task_inventory(rows)):
+        task_rows = [row for row in rows if _task_description(row) == task]
+        success_n = sum(1 for row in task_rows if bool(row.get("success", False)))
+        fail_n = len(task_rows) - success_n
+        print(f"[{idx}] episodes={len(task_rows)} success={success_n} fail={fail_n} :: {task}")
 
 
 def _flatten_activations(rec: dict) -> np.ndarray:
@@ -112,11 +210,10 @@ def _fit_labeled_direction(
     negative: str,
     agg: str,
     min_episodes: int,
+    allowed_tasks: Optional[set[str]] = None,
 ) -> tuple[np.ndarray, dict]:
-    traces_path = run_dir / "activation_traces.jsonl"
+    traces_path = _trace_path(run_dir)
     rollouts_path = run_dir / "monitor_rollouts.jsonl"
-    if not traces_path.exists():
-        raise FileNotFoundError(f"Missing: {traces_path}")
     if not rollouts_path.exists():
         raise FileNotFoundError(f"Missing: {rollouts_path}")
 
@@ -137,6 +234,8 @@ def _fit_labeled_direction(
         td = tr.get("task_description")
         ei = tr.get("episode_idx")
         if not (isinstance(td, str) and isinstance(ei, int)):
+            continue
+        if allowed_tasks is not None and td not in allowed_tasks:
             continue
         rollout = rollout_index.get((td, ei))
         if rollout is None:
@@ -169,6 +268,7 @@ def _fit_labeled_direction(
         "pos_episodes": len(pos_vecs),
         "neg_episodes": len(neg_vecs),
         "norm_before_normalize": norm,
+        "allowed_tasks": sorted(allowed_tasks) if allowed_tasks is not None else None,
     }
     return direction.astype(np.float32), meta
 
@@ -185,6 +285,11 @@ def main() -> None:
     ap.add_argument("--positive", default=None, help="Optional positive label for labeled fitting mode")
     ap.add_argument("--negative", default="success", help="Negative label for labeled fitting mode")
     ap.add_argument("--agg", default="mean", choices=["mean", "last"], help="Episode aggregation for labeled mode")
+    ap.add_argument("--list-tasks", action="store_true", help="Print task names with stable indices and exit")
+    ap.add_argument("--include-tasks", nargs="*", default=[], help="Exact task descriptions to keep before fitting")
+    ap.add_argument("--exclude-tasks", nargs="*", default=[], help="Exact task descriptions to remove before fitting")
+    ap.add_argument("--include-task-indices", default=None, help="Comma/range task indices to keep, e.g. 0,1,3-4")
+    ap.add_argument("--exclude-task-indices", default=None, help="Comma/range task indices to remove")
     ap.add_argument(
         "--out-dir",
         default="directions",
@@ -195,6 +300,25 @@ def main() -> None:
     args = ap.parse_args()
 
     run_dir = _resolve_run_dir(args.run_dir, args.log)
+    trace_path = _trace_path(run_dir)
+    all_traces = _read_jsonl(trace_path)
+    all_tasks = _task_inventory(all_traces)
+
+    if args.list_tasks:
+        _print_task_inventory(all_traces)
+        return
+
+    filtered_traces = _filter_traces(
+        all_traces,
+        all_tasks,
+        include_tasks=args.include_tasks,
+        include_task_indices=args.include_task_indices,
+        exclude_tasks=args.exclude_tasks,
+        exclude_task_indices=args.exclude_task_indices,
+    )
+    if not filtered_traces:
+        raise RuntimeError("No traces remain after task filtering.")
+    allowed_tasks = {_task_description(row) for row in filtered_traces}
 
     if args.positive:
         direction, meta = _fit_labeled_direction(
@@ -203,6 +327,7 @@ def main() -> None:
             negative=args.negative,
             agg=args.agg,
             min_episodes=args.min_episodes,
+            allowed_tasks=allowed_tasks,
         )
         if args.out:
             out_npy = Path(args.out)
@@ -224,20 +349,21 @@ def main() -> None:
     if not args.out:
         raise ValueError("Default success-vs-failure mode requires --out")
 
-    trace_path = run_dir / "activation_traces.jsonl"
-    legacy_trace_path = run_dir / "monitor_traces.jsonl"
-    if not trace_path.exists() and legacy_trace_path.exists():
-        trace_path = legacy_trace_path
-    if not trace_path.exists():
-        raise FileNotFoundError(f"Missing activation trace file in run dir: {run_dir}")
-
-    traces = _read_jsonl(trace_path)
-    direction = _fit_success_vs_failure(traces)
+    direction = _fit_success_vs_failure(filtered_traces)
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     np.save(out_path, direction)
+    meta = {
+        "run_dir": str(run_dir),
+        "trace_path": str(trace_path),
+        "tasks": sorted(allowed_tasks),
+        "episodes": len(filtered_traces),
+        "direction_path": str(out_path),
+    }
+    out_path.with_suffix(".json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
     print(f"Saved direction: {out_path} (dim={direction.shape[0]})")
+    print(f"Saved metadata : {out_path.with_suffix('.json')}")
 
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ def load_direction(path: str) -> np.ndarray:
     return v / n
 
 
-def load_probe(path: str) -> tuple[np.ndarray, float]:
+def load_probe(path: str) -> tuple[np.ndarray, float, Optional[np.ndarray], Optional[np.ndarray], Optional[float]]:
     """Load a saved logistic probe from a .npy file."""
     obj = np.load(path, allow_pickle=True)
     if isinstance(obj, np.ndarray) and obj.shape == ():
@@ -37,7 +37,22 @@ def load_probe(path: str) -> tuple[np.ndarray, float]:
     b = float(obj["b"])
     if w.ndim != 1:
         raise ValueError(f"Probe weights must be 1D, got shape {w.shape}")
-    return w, b
+    mean = obj.get("mean")
+    std = obj.get("std")
+    if (mean is None) != (std is None):
+        raise ValueError("Probe file must contain both 'mean' and 'std', or neither.")
+    if mean is not None:
+        mean = np.asarray(mean, dtype=np.float32)
+        if mean.shape != w.shape:
+            raise ValueError(f"Probe mean shape {mean.shape} does not match weights {w.shape}")
+    if std is not None:
+        std = np.asarray(std, dtype=np.float32)
+        if std.shape != w.shape:
+            raise ValueError(f"Probe std shape {std.shape} does not match weights {w.shape}")
+        std = np.where(std < 1e-6, 1.0, std).astype(np.float32)
+    threshold = obj.get("threshold")
+    threshold_f = float(threshold) if threshold is not None else None
+    return w, b, mean, std, threshold_f
 
 
 @dataclass
@@ -79,12 +94,23 @@ class LogisticProbeMonitor:
 
     w: np.ndarray
     b: float
+    mean: Optional[np.ndarray] = None
+    std: Optional[np.ndarray] = None
 
     def __post_init__(self) -> None:
         self.w = np.asarray(self.w, dtype=np.float32)
         if self.w.ndim != 1:
             raise ValueError(f"Probe weights must be 1D, got {self.w.shape}")
         self.b = float(self.b)
+        if self.mean is not None:
+            self.mean = np.asarray(self.mean, dtype=np.float32)
+            if self.mean.shape != self.w.shape:
+                raise ValueError(f"Probe mean shape {self.mean.shape} does not match weights {self.w.shape}")
+        if self.std is not None:
+            self.std = np.asarray(self.std, dtype=np.float32)
+            if self.std.shape != self.w.shape:
+                raise ValueError(f"Probe std shape {self.std.shape} does not match weights {self.w.shape}")
+            self.std = np.where(self.std < 1e-6, 1.0, self.std).astype(np.float32)
 
     def score(self, acts: np.ndarray) -> float:
         x = np.asarray(acts, dtype=np.float32)
@@ -92,6 +118,8 @@ class LogisticProbeMonitor:
             x = np.mean(x, axis=0)
         if x.ndim != 1:
             raise ValueError(f"acts must be 1D or 2D, got shape={x.shape}")
+        if self.mean is not None and self.std is not None:
+            x = (x - self.mean) / self.std
         z = float(np.dot(x, self.w) + self.b)
         if z >= 0:
             ez = np.exp(-z)
