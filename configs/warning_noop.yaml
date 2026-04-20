@@ -16,7 +16,7 @@ intervention:
 
 monitor:
   enabled: true
-  layer: 10
+  layer: 16
   site: mlp.down_proj.pre
   agg: mean
   direction_path: null

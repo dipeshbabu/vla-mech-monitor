@@ -149,7 +149,7 @@ bash run_debug.sh
 
 `run_all.sh` now sweeps combinations by default:
 
-- `MONITOR_LAYERS=16 24`
+- `MONITOR_LAYERS=8 16 24`
 - `PREDICTOR_TYPES=direction logreg`
 - `WARNING_POLICIES=none noop abort_episode hold_last`
 
@@ -636,12 +636,12 @@ logs/<run_name>
 
 Examples from the commands above:
 
-- `logs/occluded_fit_run_l10_direction`
-- `logs/clean_baseline_run_l10_direction`
-- `logs/occluded_baseline_run_l10_direction`
-- `logs/occluded_warning_run_l10_direction`
-- `logs/clean_warning_run_l10_direction`
-- debug runs use a `debug_` prefix in `RUN_TAG`, for example `logs/occluded_fit_run_debug_l10_direction`
+- `logs/occluded_fit_run_l16_direction`
+- `logs/clean_baseline_run_l16_direction`
+- `logs/occluded_baseline_run_l16_direction`
+- `logs/occluded_warning_run_l16_direction`
+- `logs/clean_warning_run_l16_direction`
+- debug runs use a `debug_` prefix in `RUN_TAG`, for example `logs/occluded_fit_run_debug_l16_direction`
 
 Common files:
 

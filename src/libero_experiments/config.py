@@ -81,7 +81,7 @@ class MonitorConfig:
     failure_type: Literal['wrong_object','drop','goal_drift'] = 'wrong_object'
 
     # capture site (keep MVP simple: one layer/site)
-    layer: int = 0
+    layer: int = 16
     site: Literal["mlp.down_proj.pre", "mlp.down_proj.post"] = "mlp.down_proj.pre"
 
     # direction monitor
