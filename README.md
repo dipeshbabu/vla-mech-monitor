@@ -141,6 +141,14 @@ Full workflow sweep with default settings:
 bash run_all.sh
 ```
 
+Layer-specific logistic-probe sweeps for splitting work across machines or teammates:
+
+```bash
+bash run_all_layer8.sh
+bash run_all_layer16.sh
+bash run_all_layer24.sh
+```
+
 Fast debug workflow:
 
 ```bash
