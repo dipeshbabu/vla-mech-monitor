@@ -11,9 +11,15 @@ set -euo pipefail
 # 7) clean + warning
 # 8) summary table
 #
-# By default, this sweeps the README-mentioned monitor layers, both predictor
-# types, and all warning policies. The expensive fit / baseline stages run once
-# per (layer, predictor) pair, and only the warning stages fan out by policy.
+# Workshop-paper default:
+# - 5 LIBERO tasks
+# - 40 trials per task
+# - layer sweep over mid / late / very-late layers
+# - predictor sweep over mean-difference direction and logistic probe
+# - warning-policy sweep over none / noop / abort_episode / hold_last
+#
+# The expensive fit / baseline stages run once per (layer, predictor) pair.
+# Only the warning stages fan out by policy.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_PATH="${ROOT_DIR}/configs/warning_noop.yaml"
@@ -26,13 +32,14 @@ export MUJOCO_GL="${MUJOCO_GL:-egl}"
 export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-egl}"
 
 TASK_IDS="${TASK_IDS:-[0,1,2,3,4]}"
-TRIALS="${TRIALS:-20}"
+TRIALS="${TRIALS:-40}"
 K_HORIZON="${K_HORIZON:-15}"
 OCC_STRENGTH="${OCC_STRENGTH:-0.35}"
 MONITOR_LAYERS="${MONITOR_LAYERS:-8 16 24}"
 PREDICTOR_TYPES="${PREDICTOR_TYPES:-direction logreg}"
 WARNING_POLICIES="${WARNING_POLICIES:-none noop abort_episode hold_last}"
-RUN_TAG_PREFIX="${RUN_TAG_PREFIX:-}"
+RUN_TAG_PREFIX="${RUN_TAG_PREFIX:-paper}"
+SUMMARY_CSV="${SUMMARY_CSV:-logs/paper_sweep_summary.csv}"
 
 monitor_layer_list=()
 predictor_type_list=()
@@ -60,6 +67,9 @@ if [[ ${#monitor_layer_list[@]} -eq 0 || ${#predictor_type_list[@]} -eq 0 || ${#
   echo "Sweep lists must not be empty." >&2
   exit 1
 fi
+
+mkdir -p "$(dirname "${SUMMARY_CSV}")"
+printf "monitor_layer,predictor_type,warning_policy,condition,episodes,success_rate,auroc,auprc,lead_time_mean,warning_rate,warning_triggers_per_ep,baseline_auroc,baseline_auprc,run_dir\n" > "${SUMMARY_CSV}"
 
 run_monitor_eval() {
   local run_dir="$1"
@@ -126,17 +136,27 @@ with open(clean_base / "warning_tau.txt", "w", encoding="utf-8") as g:
 PY
 }
 
-print_summary() {
+append_summary() {
   local clean_base="$1"
   local occ_base="$2"
   local occ_warn="$3"
   local clean_warn="$4"
   local k_horizon="$5"
+  local monitor_layer="$6"
+  local predictor_type="$7"
+  local warning_policy="$8"
+  local summary_csv="$9"
+
   CLEAN_BASE="${clean_base}" \
   OCC_BASE="${occ_base}" \
   OCC_WARN="${occ_warn}" \
   CLEAN_WARN="${clean_warn}" \
-  K_HORIZON="${k_horizon}" python - <<'PY'
+  K_HORIZON="${k_horizon}" \
+  MONITOR_LAYER_VALUE="${monitor_layer}" \
+  PREDICTOR_TYPE_VALUE="${predictor_type}" \
+  WARNING_POLICY_VALUE="${warning_policy}" \
+  SUMMARY_CSV="${summary_csv}" python - <<'PY'
+import csv
 import json
 import os
 from pathlib import Path
@@ -149,6 +169,7 @@ runs = {
 }
 k_horizon = os.environ["K_HORIZON"]
 
+
 def success_rate(run_dir: Path):
     n = 0
     s = 0
@@ -159,8 +180,11 @@ def success_rate(run_dir: Path):
             s += int(bool(row.get("success", False)))
     return s / max(n, 1), n
 
+
 def parse_metrics_txt(path: Path):
     out = {}
+    if not path.exists():
+        return out
     for line in path.read_text(encoding="utf-8").splitlines():
         if ":" not in line:
             continue
@@ -169,21 +193,37 @@ def parse_metrics_txt(path: Path):
     return out
 
 print("condition,episodes,success_rate,auroc,auprc,lead_time_mean,warning_rate,warning_triggers_per_ep,baseline_auroc,baseline_auprc")
+rows = []
 for name, run_dir in runs.items():
     sr, n = success_rate(run_dir)
     m = parse_metrics_txt(run_dir / f"metrics_k{k_horizon}.txt")
+    row = {
+        "monitor_layer": os.environ["MONITOR_LAYER_VALUE"],
+        "predictor_type": os.environ["PREDICTOR_TYPE_VALUE"],
+        "warning_policy": os.environ["WARNING_POLICY_VALUE"],
+        "condition": name,
+        "episodes": str(n),
+        "success_rate": f"{sr:.4f}",
+        "auroc": m.get("AUROC (fail within K)", ""),
+        "auprc": m.get("AUPRC (fail within K)", ""),
+        "lead_time_mean": m.get("Mean lead time (trigger -> fail)", ""),
+        "warning_rate": m.get("Warning-active rate", ""),
+        "warning_triggers_per_ep": m.get("Warning triggers / episode", ""),
+        "baseline_auroc": m.get("Uncertainty baseline AUROC (fail within K)", ""),
+        "baseline_auprc": m.get("Uncertainty baseline AUPRC (fail within K)", ""),
+        "run_dir": str(run_dir),
+    }
+    rows.append(row)
     print(",".join([
-        name,
-        str(n),
-        f"{sr:.4f}",
-        m.get("AUROC (fail within K)", ""),
-        m.get("AUPRC (fail within K)", ""),
-        m.get("Mean lead time (trigger -> fail)", ""),
-        m.get("Warning-active rate", ""),
-        m.get("Warning triggers / episode", ""),
-        m.get("Uncertainty baseline AUROC (fail within K)", ""),
-        m.get("Uncertainty baseline AUPRC (fail within K)", ""),
+        row["condition"], row["episodes"], row["success_rate"], row["auroc"], row["auprc"],
+        row["lead_time_mean"], row["warning_rate"], row["warning_triggers_per_ep"],
+        row["baseline_auroc"], row["baseline_auprc"],
     ]))
+
+summary_path = Path(os.environ["SUMMARY_CSV"])
+with summary_path.open("a", newline="", encoding="utf-8") as f:
+    writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+    writer.writerows(rows)
 PY
 }
 
@@ -197,6 +237,7 @@ echo "Trials per task: ${TRIALS}"
 echo "Monitor layers: ${monitor_layer_list[*]}"
 echo "Predictor types: ${predictor_type_list[*]}"
 echo "Warning policies: ${warning_policy_list[*]}"
+echo "Summary CSV: ${SUMMARY_CSV}"
 echo "=================="
 
 for monitor_layer in "${monitor_layer_list[@]}"; do
@@ -363,7 +404,7 @@ for monitor_layer in "${monitor_layer_list[@]}"; do
       echo "8) Summary table"
       echo "=================="
 
-      print_summary "${clean_base}" "${occ_base}" "${occ_warn}" "${clean_warn}" "${K_HORIZON}"
+      append_summary "${clean_base}" "${occ_base}" "${occ_warn}" "${clean_warn}" "${K_HORIZON}" "${monitor_layer}" "${predictor_type}" "${warning_policy}" "${SUMMARY_CSV}"
 
       echo
       echo "=================="
@@ -376,9 +417,16 @@ for monitor_layer in "${monitor_layer_list[@]}"; do
       echo "OCC_WARN=${occ_warn}"
       echo "CLEAN_WARN=${clean_warn}"
       echo "WARNING_TAU=${warning_tau}"
+      echo "Summary CSV: ${SUMMARY_CSV}"
       echo "Metrics files:"
       echo "  ${clean_base}/metrics_k${K_HORIZON}.txt"
       echo "  ${clean_base}/metrics_k${K_HORIZON}_all_eps.txt"
     done
   done
 done
+
+echo
+echo "=================="
+echo "Completed full sweep"
+echo "=================="
+echo "Summary CSV: ${SUMMARY_CSV}"
