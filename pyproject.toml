@@ -15,11 +15,16 @@ authors = [
 license = { text = "MIT" }
 dependencies = [
   "numpy==1.26.4",
+  "pandas==2.2.2",
+  "scipy==1.11.4",
+  "scikit-learn==1.4.2",
+  "matplotlib==3.8.4",
+  "seaborn==0.13.2",
+  "tabulate==0.9.0",
   "imageio==2.37.0",
   "imageio-ffmpeg==0.6.0",
   "pillow==10.3.0",
   "pyyaml==6.0.3",
-  "scikit-learn==1.4.2",
   "tqdm==4.67.1",
   "transformers==4.40.1",
   "tokenizers==0.19.1",
@@ -33,6 +38,12 @@ dependencies = [
   "cloudpickle==2.1.0",
   "gym==0.25.2",
   "mujoco==3.1.6",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==8.2.2",
+  "ruff==0.5.0",
 ]
 
 [tool.setuptools]
