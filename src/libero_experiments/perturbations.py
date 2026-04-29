@@ -1,11 +1,12 @@
 """Deterministic NearMiss perturbations (visual).
 
-Keep it simple and dependency-free (numpy only) so runs are portable.
+The main project studies whether internal OpenVLA activations contain early
+warning signals under visual distribution shift. These perturbations are kept
+simple, deterministic, and dependency-free so the same code works on local
+machines, Colab, and clusters.
 """
 
 from __future__ import annotations
-
-from typing import Optional
 
 import numpy as np
 
@@ -14,13 +15,50 @@ def _clamp_u8(x: np.ndarray) -> np.ndarray:
     return np.clip(x, 0, 255).astype(np.uint8)
 
 
+def _strength(strength: float, lo: float = 0.0, hi: float = 1.0) -> float:
+    return float(np.clip(strength, lo, hi))
+
+
+def _box_blur(img: np.ndarray, radius: int) -> np.ndarray:
+    """Small dependency-free box blur for HxWxC uint8 images."""
+    if radius <= 0:
+        return img
+    pad = radius
+    x = np.pad(img.astype(np.float32), ((pad, pad), (pad, pad), (0, 0)), mode="reflect")
+    out = np.zeros_like(img, dtype=np.float32)
+    window = 2 * pad + 1
+    denom = float(window * window)
+    for y in range(img.shape[0]):
+        ys = y
+        ye = y + window
+        for x0 in range(img.shape[1]):
+            xs = x0
+            xe = x0 + window
+            out[y, x0] = x[ys:ye, xs:xe].sum(axis=(0, 1)) / denom
+    return _clamp_u8(out)
+
+
 def apply_visual_perturbation(
     img: np.ndarray,
     kind: str,
     strength: float,
     rng: np.random.Generator,
 ) -> np.ndarray:
-    """Apply a deterministic visual perturbation to an HxWxC uint8 image."""
+    """Apply a deterministic visual perturbation to an HxWxC uint8 image.
+
+    Supported kinds:
+      occlusion: black rectangular patch, useful as the initial controlled shift.
+      background_shift: changes border/background regions while leaving the center mostly intact.
+      color_shift: global color-temperature/object-appearance style shift.
+      contrast: global contrast change.
+      brightness: global brightness change.
+      noise: additive sensor noise.
+      blur: small box blur.
+      camera_jitter: translated image with zero-filled boundary.
+    """
+    kind = str(kind).strip().lower()
+    s = _strength(strength)
+
     if kind == "occlusion":
         h, w = img.shape[:2]
         frac = float(np.clip(strength, 0.05, 0.6))
@@ -32,36 +70,50 @@ def apply_visual_perturbation(
         out[y0 : y0 + ph, x0 : x0 + pw] = 0
         return out
 
+    if kind == "background_shift":
+        # Approximate a background/domain shift without changing the simulator.
+        # We perturb image borders more strongly than the center, which usually
+        # preserves the manipulated object while changing scene context.
+        h, w = img.shape[:2]
+        border = max(1, int(min(h, w) * (0.10 + 0.20 * s)))
+        color = rng.integers(0, 256, size=(1, 1, img.shape[2]), dtype=np.uint8)
+        alpha = 0.25 + 0.55 * s
+        out = img.astype(np.float32).copy()
+        mask = np.zeros((h, w, 1), dtype=np.float32)
+        mask[:border, :, :] = 1.0
+        mask[-border:, :, :] = 1.0
+        mask[:, :border, :] = 1.0
+        mask[:, -border:, :] = 1.0
+        out = out * (1.0 - alpha * mask) + color.astype(np.float32) * (alpha * mask)
+        return _clamp_u8(out)
+
+    if kind == "color_shift":
+        # Global RGB channel scaling. This is a practical proxy for object or
+        # lighting appearance changes when simulator asset editing is unavailable.
+        gains = rng.uniform(1.0 - 0.7 * s, 1.0 + 0.7 * s, size=(1, 1, img.shape[2]))
+        return _clamp_u8(img.astype(np.float32) * gains)
+
+    if kind == "contrast":
+        factor = 1.0 + rng.uniform(-1.0, 1.0) * 0.9 * s
+        mean = np.array([127.5], dtype=np.float32)
+        return _clamp_u8((img.astype(np.float32) - mean) * factor + mean)
+
     if kind == "brightness":
-        scale = 1.0 + (rng.uniform(-1.0, 1.0) * 0.5 * float(np.clip(strength, 0.0, 1.0)))
+        scale = 1.0 + (rng.uniform(-1.0, 1.0) * 0.5 * s)
         return _clamp_u8(img.astype(np.float32) * scale)
 
+    if kind == "noise":
+        sigma = 4.0 + 36.0 * s
+        noise = rng.normal(0.0, sigma, size=img.shape)
+        return _clamp_u8(img.astype(np.float32) + noise)
+
     if kind == "blur":
-        # Cheap box blur; strength -> radius in {1,2,3}
-        rad = int(1 + np.clip(strength, 0.0, 1.0) * 2)
-        if rad <= 0:
-            return img
-        pad = rad
-        x = np.pad(img.astype(np.float32), ((pad, pad), (pad, pad), (0, 0)), mode="reflect")
-        # box filter using integral image per channel
-        out = np.zeros_like(img, dtype=np.float32)
-        for c in range(x.shape[2]):
-            s = np.cumsum(np.cumsum(x[:, :, c], axis=0), axis=1)
-            # sum over window via integral image
-            y0, x0 = 0, 0
-            y1, x1 = 2 * pad, 2 * pad
-            # compute window sums for all positions
-            A = s[y1:, x1:]
-            B = s[:-y1, x1:]
-            C = s[y1:, :-x1]
-            D = s[:-y1, :-x1]
-            win = A - B - C + D
-            out[:, :, c] = win / float((2 * pad) * (2 * pad))
-        return _clamp_u8(out)
+        radius = int(1 + s * 2)
+        return _box_blur(img, radius)
 
     if kind == "camera_jitter":
         h, w = img.shape[:2]
-        max_px = int(np.clip(strength, 0.0, 1.0) * 8) + 1
+        max_px = int(s * 8) + 1
         dy = int(rng.integers(-max_px, max_px + 1))
         dx = int(rng.integers(-max_px, max_px + 1))
         out = np.zeros_like(img)
