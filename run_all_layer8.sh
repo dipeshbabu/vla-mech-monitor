@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # Layer-specific wrapper for splitting the full experiment sweep across teammates.
-# Runs the logistic-probe predictor and all default warning policies for monitor layer 8.
+# Runs the logistic-probe predictor, default OOD shifts, and default warning
+# policies for monitor layer 8.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

@@ -17,6 +17,10 @@ set -euo pipefail
 #   DEBUG_LAYER_SWEEP=1 bash run_debug.sh
 # This uses one predictor and one warning policy across layers 8/16/24, so it tests
 # layer override wiring without exploding runtime.
+#
+# Optional OOD smoke sweep:
+#   DEBUG_OOD_SWEEP=1 bash run_debug.sh
+# This keeps one predictor and one warning policy, but runs the main OOD shifts.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT_DIR}"
@@ -32,9 +36,15 @@ if [[ "${DEBUG_LAYER_SWEEP:-0}" == "1" ]]; then
   export MONITOR_LAYERS="${MONITOR_LAYERS:-8 16 24}"
   export PREDICTOR_TYPES="${PREDICTOR_TYPES:-direction}"
   export WARNING_POLICIES="${WARNING_POLICIES:-noop}"
+elif [[ "${DEBUG_OOD_SWEEP:-0}" == "1" ]]; then
+  export MONITOR_LAYERS="${MONITOR_LAYERS:-16}"
+  export PREDICTOR_TYPES="${PREDICTOR_TYPES:-direction}"
+  export OOD_SHIFTS="${OOD_SHIFTS:-occlusion background_shift color_shift camera_jitter}"
+  export WARNING_POLICIES="${WARNING_POLICIES:-noop}"
 else
   export MONITOR_LAYERS="${MONITOR_LAYERS:-16}"
   export PREDICTOR_TYPES="${PREDICTOR_TYPES:-direction logreg}"
+  export OOD_SHIFTS="${OOD_SHIFTS:-occlusion}"
   export WARNING_POLICIES="${WARNING_POLICIES:-none noop abort_episode hold_last}"
 fi
 
@@ -47,8 +57,10 @@ echo "TRIALS=${TRIALS}"
 echo "K_HORIZON=${K_HORIZON}"
 echo "MONITOR_LAYERS=${MONITOR_LAYERS}"
 echo "PREDICTOR_TYPES=${PREDICTOR_TYPES}"
+echo "OOD_SHIFTS=${OOD_SHIFTS}"
 echo "WARNING_POLICIES=${WARNING_POLICIES}"
 echo "DEBUG_LAYER_SWEEP=${DEBUG_LAYER_SWEEP:-0}"
+echo "DEBUG_OOD_SWEEP=${DEBUG_OOD_SWEEP:-0}"
 echo "SUMMARY_CSV=${SUMMARY_CSV}"
 echo "=================="
 

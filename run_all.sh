@@ -5,9 +5,9 @@ set -euo pipefail
 # 1) occluded fit run
 # 2) fit selected predictor
 # 3) clean baseline
-# 4) occluded baseline
-# 5) calibrate warning threshold from clean
-# 6) occluded + warning
+# 4) calibrate warning threshold from clean
+# 5) OOD baselines
+# 6) OOD + warning
 # 7) clean + warning
 # 8) summary table
 #
@@ -16,10 +16,12 @@ set -euo pipefail
 # - 40 trials per task
 # - layer sweep over mid / late / very-late layers
 # - predictor sweep over mean-difference direction and logistic probe
+# - OOD shift sweep over occlusion / background_shift / color_shift / camera_jitter
 # - warning-policy sweep over none / noop / abort_episode / hold_last
 #
-# The expensive fit / baseline stages run once per (layer, predictor) pair.
-# Only the warning stages fan out by policy.
+# The expensive fit and clean-baseline stages run once per (layer, predictor)
+# pair. The OOD baseline stages fan out by shift, and warning stages fan out
+# by shift and policy.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_PATH="${ROOT_DIR}/configs/warning_noop.yaml"
@@ -37,12 +39,14 @@ K_HORIZON="${K_HORIZON:-15}"
 OCC_STRENGTH="${OCC_STRENGTH:-0.35}"
 MONITOR_LAYERS="${MONITOR_LAYERS:-8 16 24}"
 PREDICTOR_TYPES="${PREDICTOR_TYPES:-direction logreg}"
+OOD_SHIFTS="${OOD_SHIFTS:-occlusion background_shift color_shift camera_jitter}"
 WARNING_POLICIES="${WARNING_POLICIES:-none noop abort_episode hold_last}"
 RUN_TAG_PREFIX="${RUN_TAG_PREFIX:-paper}"
 SUMMARY_CSV="${SUMMARY_CSV:-logs/paper_sweep_summary.csv}"
 
 monitor_layer_list=()
 predictor_type_list=()
+ood_shift_list=()
 warning_policy_list=()
 
 if [[ -n "${MONITOR_LAYER:-}" ]]; then
@@ -57,19 +61,25 @@ else
   read -r -a predictor_type_list <<< "${PREDICTOR_TYPES}"
 fi
 
+if [[ -n "${OOD_SHIFT:-}" ]]; then
+  ood_shift_list=("${OOD_SHIFT}")
+else
+  read -r -a ood_shift_list <<< "${OOD_SHIFTS}"
+fi
+
 if [[ -n "${WARNING_POLICY:-}" ]]; then
   warning_policy_list=("${WARNING_POLICY}")
 else
   read -r -a warning_policy_list <<< "${WARNING_POLICIES}"
 fi
 
-if [[ ${#monitor_layer_list[@]} -eq 0 || ${#predictor_type_list[@]} -eq 0 || ${#warning_policy_list[@]} -eq 0 ]]; then
+if [[ ${#monitor_layer_list[@]} -eq 0 || ${#predictor_type_list[@]} -eq 0 || ${#ood_shift_list[@]} -eq 0 || ${#warning_policy_list[@]} -eq 0 ]]; then
   echo "Sweep lists must not be empty." >&2
   exit 1
 fi
 
 mkdir -p "$(dirname "${SUMMARY_CSV}")"
-printf "monitor_layer,predictor_type,warning_policy,condition,episodes,success_rate,auroc,auprc,lead_time_mean,warning_rate,warning_triggers_per_ep,baseline_auroc,baseline_auprc,run_dir\n" > "${SUMMARY_CSV}"
+printf "monitor_layer,predictor_type,ood_shift,warning_policy,condition,episodes,success_rate,auroc,auprc,lead_time_mean,warning_rate,warning_triggers_per_ep,baseline_auroc,baseline_auprc,run_dir\n" > "${SUMMARY_CSV}"
 
 run_monitor_eval() {
   local run_dir="$1"
@@ -95,6 +105,15 @@ run_eval() {
     --override env.num_trials_per_task="${TRIALS}" \
     --override monitor.layer="${monitor_layer}" \
     "$@"
+}
+
+ood_run_prefix() {
+  local ood_shift="$1"
+  if [[ "${ood_shift}" == "occlusion" ]]; then
+    echo "occluded"
+  else
+    echo "ood_${ood_shift}"
+  fi
 }
 
 fit_predictor() {
@@ -138,22 +157,24 @@ PY
 
 append_summary() {
   local clean_base="$1"
-  local occ_base="$2"
-  local occ_warn="$3"
+  local ood_base="$2"
+  local ood_warn="$3"
   local clean_warn="$4"
   local k_horizon="$5"
   local monitor_layer="$6"
   local predictor_type="$7"
-  local warning_policy="$8"
-  local summary_csv="$9"
+  local ood_shift="$8"
+  local warning_policy="$9"
+  local summary_csv="${10}"
 
   CLEAN_BASE="${clean_base}" \
-  OCC_BASE="${occ_base}" \
-  OCC_WARN="${occ_warn}" \
+  OOD_BASE="${ood_base}" \
+  OOD_WARN="${ood_warn}" \
   CLEAN_WARN="${clean_warn}" \
   K_HORIZON="${k_horizon}" \
   MONITOR_LAYER_VALUE="${monitor_layer}" \
   PREDICTOR_TYPE_VALUE="${predictor_type}" \
+  OOD_SHIFT_VALUE="${ood_shift}" \
   WARNING_POLICY_VALUE="${warning_policy}" \
   SUMMARY_CSV="${summary_csv}" python - <<'PY'
 import csv
@@ -163,8 +184,8 @@ from pathlib import Path
 
 runs = {
     "clean_base": Path(os.environ["CLEAN_BASE"]),
-    "occ_base": Path(os.environ["OCC_BASE"]),
-    "occ_warn": Path(os.environ["OCC_WARN"]),
+    "ood_base": Path(os.environ["OOD_BASE"]),
+    "ood_warn": Path(os.environ["OOD_WARN"]),
     "clean_warn": Path(os.environ["CLEAN_WARN"]),
 }
 k_horizon = os.environ["K_HORIZON"]
@@ -200,6 +221,7 @@ for name, run_dir in runs.items():
     row = {
         "monitor_layer": os.environ["MONITOR_LAYER_VALUE"],
         "predictor_type": os.environ["PREDICTOR_TYPE_VALUE"],
+        "ood_shift": os.environ["OOD_SHIFT_VALUE"],
         "warning_policy": os.environ["WARNING_POLICY_VALUE"],
         "condition": name,
         "episodes": str(n),
@@ -236,6 +258,7 @@ echo "Task IDs: ${TASK_IDS}"
 echo "Trials per task: ${TRIALS}"
 echo "Monitor layers: ${monitor_layer_list[*]}"
 echo "Predictor types: ${predictor_type_list[*]}"
+echo "OOD shifts: ${ood_shift_list[*]}"
 echo "Warning policies: ${warning_policy_list[*]}"
 echo "Summary CSV: ${SUMMARY_CSV}"
 echo "=================="
@@ -262,7 +285,6 @@ for monitor_layer in "${monitor_layer_list[@]}"; do
 
     fit_run="logs/occluded_fit_run_${base_tag}"
     clean_base="logs/clean_baseline_run_${base_tag}"
-    occ_base="logs/occluded_baseline_run_${base_tag}"
     predictor_file="${fit_run}/${predictor_basename}"
 
     echo
@@ -317,110 +339,119 @@ for monitor_layer in "${monitor_layer_list[@]}"; do
     run_monitor_eval "${clean_base}"
 
     echo
-    echo "======================"
-    echo "4) Occluded baseline"
-    echo "======================"
-
-    run_eval "${monitor_layer}" "occluded_baseline_run_${base_tag}" \
-      --override monitor.control_mode=none \
-      --override monitor.warning_policy=none \
-      --override monitor.predictor_type="${predictor_type}" \
-      --override monitor.predictor_path="${predictor_file}" \
-      --override monitor.nearmiss.enabled=true \
-      --override monitor.nearmiss.visual.enabled=true \
-      --override 'monitor.nearmiss.visual.kinds=[occlusion]' \
-      --override monitor.nearmiss.visual.strength="${OCC_STRENGTH}"
-
-    echo "OCC_BASE=${occ_base}"
-    run_monitor_eval "${occ_base}"
-
     echo
     echo "=========================================="
-    echo "5) Calibrate warning threshold from clean"
+    echo "4) Calibrate warning threshold from clean"
     echo "=========================================="
 
     calibrate_warning_tau "${clean_base}"
     warning_tau="$(cat "${clean_base}/warning_tau.txt")"
     echo "WARNING_TAU=${warning_tau}"
 
-    for warning_policy in "${warning_policy_list[@]}"; do
-      policy_tag="${base_tag}_${warning_policy}"
-      occ_warn="logs/occluded_warning_run_${policy_tag}"
-      clean_warn="logs/clean_warning_run_${policy_tag}"
+    for ood_shift in "${ood_shift_list[@]}"; do
+      ood_prefix="$(ood_run_prefix "${ood_shift}")"
+      ood_base="logs/${ood_prefix}_baseline_run_${base_tag}"
 
       echo
-      echo "=================================================="
-      echo "Running warning-policy branch"
-      echo "Monitor layer: ${monitor_layer}"
-      echo "Predictor type: ${predictor_type}"
-      echo "Warning policy: ${warning_policy}"
-      echo "Policy tag: ${policy_tag}"
-      echo "=================================================="
+      echo "======================"
+      echo "5) OOD baseline"
+      echo "======================"
+      echo "OOD shift: ${ood_shift}"
 
-      echo
-      echo "===================="
-      echo "6) Occluded + warning"
-      echo "===================="
-
-      run_eval "${monitor_layer}" "occluded_warning_run_${policy_tag}" \
+      run_eval "${monitor_layer}" "${ood_prefix}_baseline_run_${base_tag}" \
         --override monitor.control_mode=none \
+        --override monitor.warning_policy=none \
         --override monitor.predictor_type="${predictor_type}" \
         --override monitor.predictor_path="${predictor_file}" \
-        --override monitor.warning_policy="${warning_policy}" \
-        --override monitor.warning_tau="${warning_tau}" \
-        --override monitor.warning_patience=2 \
-        --override monitor.warning_duration=3 \
-        --override monitor.warning_cooldown=5 \
         --override monitor.nearmiss.enabled=true \
         --override monitor.nearmiss.visual.enabled=true \
-        --override 'monitor.nearmiss.visual.kinds=[occlusion]' \
+        --override "monitor.nearmiss.visual.kinds=[${ood_shift}]" \
         --override monitor.nearmiss.visual.strength="${OCC_STRENGTH}"
 
-      echo "OCC_WARN=${occ_warn}"
-      run_monitor_eval "${occ_warn}"
+      echo "OOD_BASE=${ood_base}"
+      run_monitor_eval "${ood_base}"
 
-      echo
-      echo "=================="
-      echo "7) Clean + warning"
-      echo "=================="
+      for warning_policy in "${warning_policy_list[@]}"; do
+        policy_tag="${base_tag}_${ood_shift}_${warning_policy}"
+        ood_warn="logs/${ood_prefix}_warning_run_${policy_tag}"
+        clean_warn="logs/clean_warning_run_${policy_tag}"
 
-      run_eval "${monitor_layer}" "clean_warning_run_${policy_tag}" \
-        --override monitor.control_mode=none \
-        --override monitor.predictor_type="${predictor_type}" \
-        --override monitor.predictor_path="${predictor_file}" \
-        --override monitor.warning_policy="${warning_policy}" \
-        --override monitor.warning_tau="${warning_tau}" \
-        --override monitor.warning_patience=2 \
-        --override monitor.warning_duration=3 \
-        --override monitor.warning_cooldown=5 \
-        --override monitor.nearmiss.enabled=false \
-        --override monitor.nearmiss.visual.enabled=false
+        echo
+        echo "=================================================="
+        echo "Running warning-policy branch"
+        echo "Monitor layer: ${monitor_layer}"
+        echo "Predictor type: ${predictor_type}"
+        echo "OOD shift: ${ood_shift}"
+        echo "Warning policy: ${warning_policy}"
+        echo "Policy tag: ${policy_tag}"
+        echo "=================================================="
 
-      echo "CLEAN_WARN=${clean_warn}"
-      run_monitor_eval "${clean_warn}"
+        echo
+        echo "===================="
+        echo "6) OOD + warning"
+        echo "===================="
 
-      echo
-      echo "=================="
-      echo "8) Summary table"
-      echo "=================="
+        run_eval "${monitor_layer}" "${ood_prefix}_warning_run_${policy_tag}" \
+          --override monitor.control_mode=none \
+          --override monitor.predictor_type="${predictor_type}" \
+          --override monitor.predictor_path="${predictor_file}" \
+          --override monitor.warning_policy="${warning_policy}" \
+          --override monitor.warning_tau="${warning_tau}" \
+          --override monitor.warning_patience=2 \
+          --override monitor.warning_duration=3 \
+          --override monitor.warning_cooldown=5 \
+          --override monitor.nearmiss.enabled=true \
+          --override monitor.nearmiss.visual.enabled=true \
+          --override "monitor.nearmiss.visual.kinds=[${ood_shift}]" \
+          --override monitor.nearmiss.visual.strength="${OCC_STRENGTH}"
 
-      append_summary "${clean_base}" "${occ_base}" "${occ_warn}" "${clean_warn}" "${K_HORIZON}" "${monitor_layer}" "${predictor_type}" "${warning_policy}" "${SUMMARY_CSV}"
+        echo "OOD_WARN=${ood_warn}"
+        run_monitor_eval "${ood_warn}"
 
-      echo
-      echo "=================="
-      echo "Finished branch"
-      echo "=================="
-      echo "FIT_RUN=${fit_run}"
-      echo "PREDICTOR_FILE=${predictor_file}"
-      echo "CLEAN_BASE=${clean_base}"
-      echo "OCC_BASE=${occ_base}"
-      echo "OCC_WARN=${occ_warn}"
-      echo "CLEAN_WARN=${clean_warn}"
-      echo "WARNING_TAU=${warning_tau}"
-      echo "Summary CSV: ${SUMMARY_CSV}"
-      echo "Metrics files:"
-      echo "  ${clean_base}/metrics_k${K_HORIZON}.txt"
-      echo "  ${clean_base}/metrics_k${K_HORIZON}_all_eps.txt"
+        echo
+        echo "=================="
+        echo "7) Clean + warning"
+        echo "=================="
+
+        run_eval "${monitor_layer}" "clean_warning_run_${policy_tag}" \
+          --override monitor.control_mode=none \
+          --override monitor.predictor_type="${predictor_type}" \
+          --override monitor.predictor_path="${predictor_file}" \
+          --override monitor.warning_policy="${warning_policy}" \
+          --override monitor.warning_tau="${warning_tau}" \
+          --override monitor.warning_patience=2 \
+          --override monitor.warning_duration=3 \
+          --override monitor.warning_cooldown=5 \
+          --override monitor.nearmiss.enabled=false \
+          --override monitor.nearmiss.visual.enabled=false
+
+        echo "CLEAN_WARN=${clean_warn}"
+        run_monitor_eval "${clean_warn}"
+
+        echo
+        echo "=================="
+        echo "8) Summary table"
+        echo "=================="
+
+        append_summary "${clean_base}" "${ood_base}" "${ood_warn}" "${clean_warn}" "${K_HORIZON}" "${monitor_layer}" "${predictor_type}" "${ood_shift}" "${warning_policy}" "${SUMMARY_CSV}"
+
+        echo
+        echo "=================="
+        echo "Finished branch"
+        echo "=================="
+        echo "FIT_RUN=${fit_run}"
+        echo "PREDICTOR_FILE=${predictor_file}"
+        echo "CLEAN_BASE=${clean_base}"
+        echo "OOD_SHIFT=${ood_shift}"
+        echo "OOD_BASE=${ood_base}"
+        echo "OOD_WARN=${ood_warn}"
+        echo "CLEAN_WARN=${clean_warn}"
+        echo "WARNING_TAU=${warning_tau}"
+        echo "Summary CSV: ${SUMMARY_CSV}"
+        echo "Metrics files:"
+        echo "  ${clean_base}/metrics_k${K_HORIZON}.txt"
+        echo "  ${clean_base}/metrics_k${K_HORIZON}_all_eps.txt"
+      done
     done
   done
 done

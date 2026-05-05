@@ -192,9 +192,10 @@ bash run_debug.sh
 
 - `MONITOR_LAYERS=8 16 24`
 - `PREDICTOR_TYPES=direction logreg`
+- `OOD_SHIFTS=occlusion background_shift color_shift camera_jitter`
 - `WARNING_POLICIES=none noop abort_episode hold_last`
 
-The expensive fit and baseline stages run once per `(layer, predictor)` pair, and the warning runs fan out over policies.
+The expensive fit and clean-baseline stages run once per `(layer, predictor)` pair. OOD baselines fan out over `OOD_SHIFTS`, and warning runs fan out over both OOD shifts and policies. The predictor is fit once on occlusion, then reused across shifts to test generalization.
 
 You can still narrow the sweep with environment overrides:
 
@@ -203,7 +204,13 @@ MONITOR_LAYER=16 PREDICTOR_TYPE=logreg WARNING_POLICY=noop bash run_all.sh
 ```
 
 ```bash
-MONITOR_LAYER=24 PREDICTOR_TYPE=direction RUN_TAG=layer24_direction bash run_debug.sh
+MONITOR_LAYER=24 PREDICTOR_TYPE=direction RUN_TAG_PREFIX=layer24_direction bash run_debug.sh
+```
+
+Run just one OOD shift:
+
+```bash
+OOD_SHIFT=background_shift bash run_all.sh
 ```
 
 Useful runner environment variables:
@@ -212,6 +219,8 @@ Useful runner environment variables:
 - `MONITOR_LAYERS`
 - `PREDICTOR_TYPE` with values `direction` or `logreg`
 - `PREDICTOR_TYPES`
+- `OOD_SHIFT`
+- `OOD_SHIFTS` with values from the supported visual OOD kinds
 - `WARNING_POLICY` with values `none`, `noop`, `abort_episode`, or `hold_last`
 - `WARNING_POLICIES`
 - `TASK_IDS`
@@ -220,6 +229,12 @@ Useful runner environment variables:
 - `RUN_TAG_PREFIX`
 
 ### Smoke test before long experiments
+
+`run_debug.sh` defaults to a compact occlusion-only smoke test. To smoke-test OOD sweep wiring without running the full grid:
+
+```bash
+DEBUG_OOD_SWEEP=1 bash run_debug.sh
+```
 
 Run this first whenever the code changes:
 
@@ -762,12 +777,14 @@ logs/<run_name>
 
 Examples from the commands above:
 
-- `logs/occluded_fit_run_l16_direction`
-- `logs/clean_baseline_run_l16_direction`
-- `logs/occluded_baseline_run_l16_direction`
-- `logs/occluded_warning_run_l16_direction`
-- `logs/clean_warning_run_l16_direction`
-- debug runs use a `debug_` prefix in `RUN_TAG`, for example `logs/occluded_fit_run_debug_l16_direction`
+- `logs/occluded_fit_run_paper_l16_direction`
+- `logs/clean_baseline_run_paper_l16_direction`
+- `logs/occluded_baseline_run_paper_l16_direction`
+- `logs/occluded_warning_run_paper_l16_direction_occlusion_noop`
+- `logs/ood_background_shift_baseline_run_paper_l16_direction`
+- `logs/ood_background_shift_warning_run_paper_l16_direction_background_shift_noop`
+- `logs/clean_warning_run_paper_l16_direction_background_shift_noop`
+- debug runs use a `debug_` prefix in `RUN_TAG_PREFIX`, for example `logs/occluded_fit_run_debug_l16_direction`
 
 Common files:
 
