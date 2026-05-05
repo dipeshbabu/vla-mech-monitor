@@ -194,8 +194,17 @@ bash run_debug.sh
 - `PREDICTOR_TYPES=direction logreg`
 - `OOD_SHIFTS=occlusion background_shift color_shift camera_jitter`
 - `WARNING_POLICIES=none noop abort_episode hold_last`
+- `RUN_MIXED_OOD=1`
+- `RUN_TASK_HELDOUT=1`
+- `RUN_UNCERTAINTY_BASELINE=1`
 
 The expensive fit and clean-baseline stages run once per `(layer, predictor)` pair. OOD baselines fan out over `OOD_SHIFTS`, and warning runs fan out over both OOD shifts and policies. The predictor is fit once on occlusion, then reused across shifts to test generalization.
+
+After the main warning sweep, `run_all.sh` also runs the paper extras by default:
+
+- mixed-OOD fit on `MIXED_FIT_SHIFTS=occlusion background_shift color_shift`, then held-out OOD evaluation on `HELDOUT_OOD_SHIFTS=camera_jitter`
+- task-held-out predictor fitting with train tasks `0,1,2`, validation task `3`, and held-out test task `4`
+- action-disagreement uncertainty baselines on the same OOD shift suite
 
 You can still narrow the sweep with environment overrides:
 
@@ -213,6 +222,12 @@ Run just one OOD shift:
 OOD_SHIFT=background_shift bash run_all.sh
 ```
 
+Skip expensive extras for a warning-only sweep:
+
+```bash
+RUN_MIXED_OOD=0 RUN_TASK_HELDOUT=0 RUN_UNCERTAINTY_BASELINE=0 bash run_all.sh
+```
+
 Useful runner environment variables:
 
 - `MONITOR_LAYER`
@@ -223,6 +238,19 @@ Useful runner environment variables:
 - `OOD_SHIFTS` with values from the supported visual OOD kinds
 - `WARNING_POLICY` with values `none`, `noop`, `abort_episode`, or `hold_last`
 - `WARNING_POLICIES`
+- `RUN_MIXED_OOD`
+- `MIXED_FIT_SHIFTS`
+- `HELDOUT_OOD_SHIFTS`
+- `MIXED_TRIALS`
+- `RUN_TASK_HELDOUT`
+- `TASK_HELDOUT_TRAIN_TASKS`
+- `TASK_HELDOUT_VAL_TASKS`
+- `TASK_HELDOUT_TEST_TASKS`
+- `TASK_HELDOUT_EVAL_TASK_IDS`
+- `RUN_UNCERTAINTY_BASELINE`
+- `UNCERTAINTY_BASELINE_SHIFTS`
+- `UNCERTAINTY_NUM_SAMPLES`
+- `UNCERTAINTY_JITTER_STD`
 - `TASK_IDS`
 - `TRIALS`
 - `OCC_STRENGTH`
@@ -230,10 +258,16 @@ Useful runner environment variables:
 
 ### Smoke test before long experiments
 
-`run_debug.sh` defaults to a compact occlusion-only smoke test. To smoke-test OOD sweep wiring without running the full grid:
+`run_debug.sh` defaults to a compact occlusion-only smoke test and disables mixed-OOD, task-held-out, and uncertainty stages. To smoke-test OOD sweep wiring without running the full grid:
 
 ```bash
 DEBUG_OOD_SWEEP=1 bash run_debug.sh
+```
+
+To include one of the expensive extras in a debug run, enable it explicitly:
+
+```bash
+RUN_TASK_HELDOUT=1 bash run_debug.sh
 ```
 
 Run this first whenever the code changes:
@@ -450,7 +484,7 @@ python scripts/run_eval.py \
   --override monitor.direction_path=null \
   --override monitor.nearmiss.enabled=true \
   --override monitor.nearmiss.visual.enabled=true \
-  --override 'monitor.nearmiss.visual.kinds=[occlusion,background_shift,color_shift,camera_jitter]' \
+  --override 'monitor.nearmiss.visual.kinds=[occlusion,background_shift,color_shift]' \
   --override monitor.nearmiss.visual.strength=0.35
 
 python scripts/fit_direction.py \
@@ -469,7 +503,7 @@ python scripts/fit_probe.py \
   --out logs/mixed_ood_fit_run/failure_probe_task_holdout.npy
 ```
 
-Then rerun the single-shift OOD tests above using `logs/mixed_ood_fit_run/failure_direction.npy` or `logs/mixed_ood_fit_run/failure_probe_task_holdout.npy` as the predictor path.
+Then rerun the single-shift OOD tests above on a held-out shift such as `camera_jitter`, using `logs/mixed_ood_fit_run/failure_direction.npy` or `logs/mixed_ood_fit_run/failure_probe_task_holdout.npy` as the predictor path.
 
 ## Clean and occluded baselines
 
