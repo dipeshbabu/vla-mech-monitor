@@ -16,7 +16,7 @@ set -euo pipefail
 #
 # Workshop-paper default:
 # - 5 LIBERO tasks
-# - 40 trials per task
+# - 20 trials per task
 # - layer sweep over mid / late / very-late layers
 # - predictor sweep over mean-difference direction and logistic probe
 # - OOD shift sweep over occlusion / background_shift / color_shift / camera_jitter
@@ -40,7 +40,7 @@ export MUJOCO_GL="${MUJOCO_GL:-egl}"
 export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-egl}"
 
 TASK_IDS="${TASK_IDS:-[0,1,2,3,4]}"
-TRIALS="${TRIALS:-40}"
+TRIALS="${TRIALS:-20}"
 K_HORIZON="${K_HORIZON:-15}"
 OCC_STRENGTH="${OCC_STRENGTH:-0.35}"
 MONITOR_LAYERS="${MONITOR_LAYERS:-8 16 24}"
