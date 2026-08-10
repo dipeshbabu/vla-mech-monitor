@@ -16,7 +16,7 @@ import argparse
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List
+from typing import List, Sequence
 
 import numpy as np
 
@@ -75,6 +75,13 @@ class Metrics:
     baseline_auprc: float = float("nan")
 
 
+@dataclass(frozen=True)
+class ConfidenceInterval:
+    low: float
+    high: float
+    valid_samples: int
+
+
 def _trigger_times(steps: List[dict]) -> List[int]:
     warning_ts = [int(s["t"]) for s in steps if bool(s.get("warning_triggered", False))]
     if warning_ts:
@@ -87,7 +94,21 @@ def _trigger_times(steps: List[dict]) -> List[int]:
     return [int(s["t"]) for s in steps if abs(float(s.get("coef", 0.0))) > 1e-9]
 
 
-def compute_metrics(log_path: Path, k: int, include_success_episodes: bool = False) -> Metrics:
+def _read_episodes(log_path: Path) -> list[dict]:
+    episodes: list[dict] = []
+    with log_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                episodes.append(json.loads(line))
+    return episodes
+
+
+def _compute_metrics_from_episodes(
+    episodes: Sequence[dict],
+    *,
+    k: int,
+    include_success_episodes: bool,
+) -> Metrics:
     y_true_all: List[int] = []
     y_score_all: List[float] = []
     y_true_baseline: List[int] = []
@@ -100,57 +121,47 @@ def compute_metrics(log_path: Path, k: int, include_success_episodes: bool = Fal
     warning_triggers = 0
     episodes_with_steps = 0
 
-    with log_path.open("r", encoding="utf-8") as f:
-        for line in f:
-            if not line.strip():
-                continue
-            ep = json.loads(line)
-            steps = ep.get("steps", [])
-            if steps:
-                episodes_with_steps += 1
-            failure_t = ep.get("failure_t", None)
-            success = ep.get("success", None)
+    for ep in episodes:
+        steps = ep.get("steps", [])
+        if steps:
+            episodes_with_steps += 1
+        failure_t = ep.get("failure_t", None)
+        success = ep.get("success", None)
 
-            # collect coef stats
-            for s in steps:
-                coef_total += 1
-                # warning stats (optional fields)
-                warning_total_steps += 1
-                if bool(s.get('warning_active', False)):
-                    warning_active_steps += 1
-                if bool(s.get('warning_triggered', False)):
-                    warning_triggers += 1
-                if abs(float(s.get("coef", 0.0))) > 1e-9:
-                    coef_nonzero += 1
+        for s in steps:
+            coef_total += 1
+            warning_total_steps += 1
+            if bool(s.get("warning_active", False)):
+                warning_active_steps += 1
+            if bool(s.get("warning_triggered", False)):
+                warning_triggers += 1
+            if abs(float(s.get("coef", 0.0))) > 1e-9:
+                coef_nonzero += 1
 
-            # build arrays aligned to steps
-            ts = np.array([int(s["t"]) for s in steps], dtype=np.int32)
-            risk = np.array([float(s["risk"]) for s in steps], dtype=np.float32)
-            should_score = failure_t is not None and success is not True
-            if include_success_episodes and success is True:
-                should_score = True
+        ts = np.array([int(s["t"]) for s in steps], dtype=np.int32)
+        risk = np.array([float(s["risk"]) for s in steps], dtype=np.float32)
+        should_score = failure_t is not None and success is not True
+        if include_success_episodes and success is True:
+            should_score = True
 
-            if should_score:
-                if failure_t is None:
-                    y = np.zeros_like(ts, dtype=np.int32)
-                else:
-                    # label step t as 1 if failure_t - t <= k and failure_t >= t
-                    y = (((failure_t - ts) <= k) & ((failure_t - ts) >= 0)).astype(np.int32)
-                y_true_all.extend(y.astype(np.int32).tolist())
-                y_score_all.extend(risk.tolist())
-                baseline_scores = [s.get("baseline_uncertainty", None) for s in steps]
-                for label, score in zip(y.astype(np.int32).tolist(), baseline_scores):
-                    if score is None:
-                        continue
-                    y_true_baseline.append(int(label))
-                    y_score_baseline.append(float(score))
+        if should_score:
+            if failure_t is None:
+                y = np.zeros_like(ts, dtype=np.int32)
+            else:
+                y = (((failure_t - ts) <= k) & ((failure_t - ts) >= 0)).astype(np.int32)
+            y_true_all.extend(y.astype(np.int32).tolist())
+            y_score_all.extend(risk.tolist())
+            baseline_scores = [s.get("baseline_uncertainty", None) for s in steps]
+            for label, score in zip(y.astype(np.int32).tolist(), baseline_scores):
+                if score is None:
+                    continue
+                y_true_baseline.append(int(label))
+                y_score_baseline.append(float(score))
 
-            # Lead time is measured from the first monitor event that fired.
-            # For warning-only runs, this comes from warning_triggered rather than closed-loop triggered.
-            if failure_t is not None:
-                trig_ts = _trigger_times(steps)
-                if trig_ts:
-                    lead_times.append(float(failure_t - min(trig_ts)))
+        if failure_t is not None:
+            trig_ts = _trigger_times(steps)
+            if trig_ts:
+                lead_times.append(float(failure_t - min(trig_ts)))
 
     y_true = np.array(y_true_all, dtype=np.int32)
     y_score = np.array(y_score_all, dtype=np.float32)
@@ -176,6 +187,95 @@ def compute_metrics(log_path: Path, k: int, include_success_episodes: bool = Fal
     )
 
 
+def compute_metrics(log_path: Path, k: int, include_success_episodes: bool = False) -> Metrics:
+    return _compute_metrics_from_episodes(
+        _read_episodes(log_path),
+        k=k,
+        include_success_episodes=include_success_episodes,
+    )
+
+
+def bootstrap_confidence_intervals(
+    log_path: Path,
+    *,
+    k: int,
+    include_success_episodes: bool = False,
+    samples: int = 2000,
+    confidence: float = 0.95,
+    seed: int = 7,
+) -> dict[str, ConfidenceInterval]:
+    """Bootstrap whole episodes and return percentile intervals."""
+
+    if samples <= 0:
+        raise ValueError(f"samples must be positive, got {samples}")
+    if not 0.0 < confidence < 1.0:
+        raise ValueError(f"confidence must lie in (0, 1), got {confidence}")
+
+    episodes = _read_episodes(log_path)
+    if not episodes:
+        raise ValueError(f"No episodes found in {log_path}")
+
+    rng = np.random.default_rng(seed)
+    names = ("auroc", "auprc", "mean_lead")
+    values: dict[str, list[float]] = {name: [] for name in names}
+    for _ in range(samples):
+        indices = rng.integers(0, len(episodes), size=len(episodes))
+        sampled = [episodes[int(index)] for index in indices]
+        metrics = _compute_metrics_from_episodes(
+            sampled,
+            k=k,
+            include_success_episodes=include_success_episodes,
+        )
+        for name in names:
+            value = float(getattr(metrics, name))
+            if np.isfinite(value):
+                values[name].append(value)
+
+    tail = (1.0 - confidence) / 2.0
+    intervals: dict[str, ConfidenceInterval] = {}
+    for name, finite_values in values.items():
+        if not finite_values:
+            intervals[name] = ConfidenceInterval(float("nan"), float("nan"), 0)
+            continue
+        low, high = np.quantile(np.asarray(finite_values), [tail, 1.0 - tail])
+        intervals[name] = ConfidenceInterval(float(low), float(high), len(finite_values))
+    return intervals
+
+
+def compute_failure_type_metrics(
+    log_path: Path,
+    *,
+    k: int,
+    include_success_episodes: bool = False,
+) -> dict[str, Metrics]:
+    """Compute metrics separately for each recorded failure type."""
+
+    episodes = _read_episodes(log_path)
+    successes = [episode for episode in episodes if episode.get("success") is True]
+    failure_types = sorted(
+        {
+            str(episode["failure_type"])
+            for episode in episodes
+            if episode.get("success") is not True and episode.get("failure_type") is not None
+        }
+    )
+    output: dict[str, Metrics] = {}
+    for failure_type in failure_types:
+        selected = [
+            episode
+            for episode in episodes
+            if episode.get("success") is not True and str(episode.get("failure_type")) == failure_type
+        ]
+        if include_success_episodes:
+            selected.extend(successes)
+        output[failure_type] = _compute_metrics_from_episodes(
+            selected,
+            k=k,
+            include_success_episodes=include_success_episodes,
+        )
+    return output
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--log", type=str, required=True, help="Path to monitor_rollouts.jsonl")
@@ -185,6 +285,10 @@ def main() -> None:
         action="store_true",
         help="Include successful episodes as negative examples in AUROC/AUPRC computation",
     )
+    ap.add_argument("--bootstrap-samples", type=int, default=0, help="Episode bootstrap samples (0 disables)")
+    ap.add_argument("--bootstrap-seed", type=int, default=7)
+    ap.add_argument("--confidence", type=float, default=0.95)
+    ap.add_argument("--failure-type-breakdown", action="store_true")
     args = ap.parse_args()
 
     m = compute_metrics(
@@ -206,6 +310,36 @@ def main() -> None:
     if not np.isnan(m.baseline_auroc) or not np.isnan(m.baseline_auprc):
         print(f"Uncertainty baseline AUROC (fail within K): {m.baseline_auroc:.4f}")
         print(f"Uncertainty baseline AUPRC (fail within K): {m.baseline_auprc:.4f}")
+
+    if args.bootstrap_samples > 0:
+        intervals = bootstrap_confidence_intervals(
+            Path(args.log),
+            k=int(args.k),
+            include_success_episodes=bool(args.include_success_episodes),
+            samples=int(args.bootstrap_samples),
+            confidence=float(args.confidence),
+            seed=int(args.bootstrap_seed),
+        )
+        print(f"Episode-bootstrap intervals ({100.0 * args.confidence:.1f}%):")
+        for name in ("auroc", "auprc", "mean_lead"):
+            interval = intervals[name]
+            print(
+                f"  {name}: [{interval.low:.4f}, {interval.high:.4f}] "
+                f"({interval.valid_samples}/{args.bootstrap_samples} valid resamples)"
+            )
+
+    if args.failure_type_breakdown:
+        print("Failure-type breakdown:")
+        breakdown = compute_failure_type_metrics(
+            Path(args.log),
+            k=int(args.k),
+            include_success_episodes=bool(args.include_success_episodes),
+        )
+        for failure_type, metrics in breakdown.items():
+            print(
+                f"  {failure_type}: AUROC={metrics.auroc:.4f}, "
+                f"AUPRC={metrics.auprc:.4f}, mean_lead={metrics.mean_lead:.2f}"
+            )
 
 
 if __name__ == "__main__":

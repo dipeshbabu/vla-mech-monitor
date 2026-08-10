@@ -8,6 +8,8 @@ env:
   num_trials_per_task: 20
   seed: 7
   selected_task_ids: [0, 1, 2, 3, 4]
+  initial_state_offset: 0
+  initial_state_indices: []
 
 intervention:
   enabled: false

@@ -17,6 +17,7 @@ set -euo pipefail
 # Workshop-paper default:
 # - 5 LIBERO tasks
 # - 20 trials per task
+# - explicit run seeds and initial-state blocks for auditable collections
 # - layer sweep over mid / late / very-late layers
 # - predictor sweep over mean-difference direction and logistic probe
 # - OOD shift sweep over occlusion / background_shift / color_shift / camera_jitter
@@ -41,7 +42,13 @@ export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-egl}"
 
 TASK_IDS="${TASK_IDS:-[0,1,2,3,4]}"
 TRIALS="${TRIALS:-20}"
+RUN_SEED="${RUN_SEED:-7}"
+INITIAL_STATE_OFFSET="${INITIAL_STATE_OFFSET:-0}"
+INITIAL_STATE_INDICES="${INITIAL_STATE_INDICES:-}"
 K_HORIZON="${K_HORIZON:-15}"
+BOOTSTRAP_SAMPLES="${BOOTSTRAP_SAMPLES:-0}"
+BOOTSTRAP_SEED="${BOOTSTRAP_SEED:-7}"
+REPORT_FAILURE_TYPES="${REPORT_FAILURE_TYPES:-0}"
 OCC_STRENGTH="${OCC_STRENGTH:-0.35}"
 MONITOR_LAYERS="${MONITOR_LAYERS:-8 16 24}"
 PREDICTOR_TYPES="${PREDICTOR_TYPES:-direction logreg}"
@@ -76,6 +83,20 @@ warning_policy_list=()
 mixed_fit_shift_list=()
 heldout_ood_shift_list=()
 uncertainty_ood_shift_list=()
+reset_override_args=(--override "env.initial_state_offset=${INITIAL_STATE_OFFSET}")
+monitor_eval_extra_args=()
+
+if [[ -n "${INITIAL_STATE_INDICES}" ]]; then
+  reset_override_args+=(--override "env.initial_state_indices=${INITIAL_STATE_INDICES}")
+fi
+
+if [[ "${BOOTSTRAP_SAMPLES}" -gt 0 ]]; then
+  monitor_eval_extra_args+=(--bootstrap-samples "${BOOTSTRAP_SAMPLES}" --bootstrap-seed "${BOOTSTRAP_SEED}")
+fi
+
+if [[ "${REPORT_FAILURE_TYPES}" == "1" ]]; then
+  monitor_eval_extra_args+=(--failure-type-breakdown)
+fi
 
 if [[ -n "${MONITOR_LAYER:-}" ]]; then
   monitor_layer_list=("${MONITOR_LAYER}")
@@ -127,12 +148,14 @@ run_monitor_eval() {
   local run_dir="$1"
   python scripts/monitor_eval.py \
     --log "${run_dir}/monitor_rollouts.jsonl" \
-    --k "${K_HORIZON}" | tee "${run_dir}/metrics_k${K_HORIZON}.txt"
+    --k "${K_HORIZON}" \
+    "${monitor_eval_extra_args[@]}" | tee "${run_dir}/metrics_k${K_HORIZON}.txt"
 
   python scripts/monitor_eval.py \
     --log "${run_dir}/monitor_rollouts.jsonl" \
     --k "${K_HORIZON}" \
-    --include-success-episodes | tee "${run_dir}/metrics_k${K_HORIZON}_all_eps.txt"
+    --include-success-episodes \
+    "${monitor_eval_extra_args[@]}" | tee "${run_dir}/metrics_k${K_HORIZON}_all_eps.txt"
 }
 
 run_eval() {
@@ -157,6 +180,8 @@ run_eval_with_task_ids() {
     --override logging.run_name="${run_name}" \
     --override env.selected_task_ids="${task_ids}" \
     --override env.num_trials_per_task="${trials}" \
+    --override env.seed="${RUN_SEED}" \
+    "${reset_override_args[@]}" \
     --override monitor.layer="${monitor_layer}" \
     "$@"
 }
@@ -186,6 +211,7 @@ fit_predictor() {
   else
     python scripts/fit_probe.py \
       --run-dir "${fit_run}" \
+      --horizon-k "${K_HORIZON}" \
       --out "${predictor_file}"
   fi
 }
@@ -416,6 +442,11 @@ echo "=================="
 echo "Repo root: ${ROOT_DIR}"
 echo "Task IDs: ${TASK_IDS}"
 echo "Trials per task: ${TRIALS}"
+echo "Run seed: ${RUN_SEED}"
+echo "Initial-state offset: ${INITIAL_STATE_OFFSET}"
+echo "Explicit initial-state indices: ${INITIAL_STATE_INDICES:-<none>}"
+echo "Bootstrap samples: ${BOOTSTRAP_SAMPLES}"
+echo "Failure-type breakdown: ${REPORT_FAILURE_TYPES}"
 echo "Monitor layers: ${monitor_layer_list[*]}"
 echo "Predictor types: ${predictor_type_list[*]}"
 echo "OOD shifts: ${ood_shift_list[*]}"

@@ -4,7 +4,7 @@ This repo is the LIBERO monitoring project only. It evaluates OpenVLA under cont
 
 The current research question is:
 
-> Can internal activations of a Vision-Language-Action policy provide early warning signals of task failure under visual out-of-distribution shifts, beyond simply detecting one synthetic perturbation?
+> Can internal representations of a Vision-Language-Action policy provide failure-related signals for runtime monitoring under visual shift, and what evidence is required before those signals can support a safety response?
 
 ## What changed after the progress feedback
 
@@ -26,7 +26,7 @@ For the final workshop-style story, use `occlusion`, `background_shift`, `color_
 - `scripts/` contains all runnable entrypoints.
 - `configs/` contains the active run config and intervention dictionaries.
 - `setup/` contains environment/bootstrap scripts.
-- `run_all.sh` and `run_debug.sh` run the full workflows from repo root.
+- `run_all.sh`, `run_heldout.sh`, and `run_debug.sh` run the full, fixed-predictor test, and debug workflows.
 - `logs/` is created at runtime and stores eval outputs.
 
 ```text
@@ -36,6 +36,7 @@ For the final workshop-style story, use `occlusion`, `background_shift`, `color_
 |   |   `-- dictionaries.yaml
 |   `-- warning_noop.yaml
 |-- run_all.sh
+|-- run_heldout.sh
 |-- run_debug.sh
 |-- scripts/
 |   |-- fit_direction.py
@@ -216,6 +217,28 @@ MONITOR_LAYER=16 PREDICTOR_TYPE=logreg WARNING_POLICY=noop bash run_all.sh
 MONITOR_LAYER=24 PREDICTOR_TYPE=direction RUN_TAG_PREFIX=layer24_direction bash run_debug.sh
 ```
 
+Fit on one reset block, then score the saved predictor on a disjoint block:
+
+```bash
+MONITOR_LAYER=16 PREDICTOR_TYPE=logreg OOD_SHIFT=occlusion WARNING_POLICY=none \
+  RUN_MIXED_OOD=0 RUN_TASK_HELDOUT=0 RUN_UNCERTAINTY_BASELINE=0 \
+  RUN_SEED=7 INITIAL_STATE_OFFSET=0 RUN_TAG_PREFIX=fit \
+  SUMMARY_CSV=logs/fit_summary.csv bash run_all.sh
+
+PREDICTOR_PATH=logs/occluded_fit_run_fit_l16_logreg/failure_probe.npy \
+  PREDICTOR_TYPE=logreg MONITOR_LAYER=16 RUN_SEED=8 INITIAL_STATE_OFFSET=20 \
+  OOD_SHIFT=occlusion RUN_NAME=heldout_occlusion_seed8 bash run_heldout.sh
+```
+
+Changing `RUN_SEED` alone does not change LIBERO reset identities. The evaluator selects and records
+the configured initial-state indices in `reset_manifest.jsonl`. A collection is held out only when its
+indices are disjoint from the fitting collection. `run_heldout.sh` requires a previously fitted
+predictor and never refits it on the test block. Set `INITIAL_STATE_INDICES` to a
+YAML list such as `[20,23,27]` when a predeclared manifest is preferable to a contiguous offset. Its
+length must equal `TRIALS`.
+
+The runner passes `K_HORIZON` to both logistic-probe fitting and evaluation. This prevents the historical $K=20$ fit and $K=15$ evaluation mismatch.
+
 Run just one OOD shift:
 
 ```bash
@@ -253,6 +276,11 @@ Useful runner environment variables:
 - `UNCERTAINTY_JITTER_STD`
 - `TASK_IDS`
 - `TRIALS`
+- `RUN_SEED`
+- `INITIAL_STATE_OFFSET`
+- `INITIAL_STATE_INDICES`
+- `BOOTSTRAP_SAMPLES` and `BOOTSTRAP_SEED`
+- `REPORT_FAILURE_TYPES` with values `0` or `1`
 - `OCC_STRENGTH`
 - `RUN_TAG_PREFIX`
 
@@ -332,6 +360,7 @@ FIT_RUN=logs/occluded_fit_run
 
 python scripts/fit_probe.py \
   --run-dir "$FIT_RUN" \
+  --horizon-k 15 \
   --out "$FIT_RUN/failure_probe.npy"
 ```
 
@@ -769,6 +798,22 @@ python scripts/monitor_eval.py \
   --include-success-episodes
 ```
 
+Add episode-resampled confidence intervals and failure-type slices:
+
+```bash
+python scripts/monitor_eval.py \
+  --log logs/<RUN_ID>/monitor_rollouts.jsonl \
+  --k 15 \
+  --include-success-episodes \
+  --bootstrap-samples 2000 \
+  --bootstrap-seed 7 \
+  --confidence 0.95 \
+  --failure-type-breakdown
+```
+
+The bootstrap samples whole episodes rather than individual steps. Some resamples can lack one class;
+the report states how many resamples produced a finite interval estimate.
+
 This reports:
 
 - AUROC
@@ -778,6 +823,8 @@ This reports:
 - warning-active rate
 - warning triggers per episode
 - optional uncertainty-baseline AUROC/AUPRC when `monitor.uncertainty_baseline` is enabled
+- optional episode-bootstrap intervals for AUROC, AUPRC, and mean lead time
+- optional metrics separated by recorded failure type
 - two evaluation scopes are available: failure/timeout only, or all episodes via `--include-success-episodes`
 
 ## Extra Utilities

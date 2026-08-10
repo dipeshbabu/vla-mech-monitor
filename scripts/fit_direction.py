@@ -220,12 +220,14 @@ def _fit_labeled_direction(
     traces = _read_jsonl(traces_path)
     rollouts = _read_jsonl(rollouts_path)
 
-    rollout_index: Dict[Tuple[str, int], dict] = {}
+    rollout_index: Dict[Tuple[str, int, int], dict] = {}
     for row in rollouts:
         td = row.get("task_description")
         ei = row.get("episode_idx")
-        if isinstance(td, str) and isinstance(ei, int):
-            rollout_index[(td, ei)] = row
+        si = row.get("seed", -1)
+        ri = row.get("initial_state_idx", ei)
+        if isinstance(td, str) and isinstance(ei, int) and isinstance(si, int) and isinstance(ri, int):
+            rollout_index[(td, si, ri)] = row
 
     pos_vecs: List[np.ndarray] = []
     neg_vecs: List[np.ndarray] = []
@@ -233,11 +235,18 @@ def _fit_labeled_direction(
     for tr in traces:
         td = tr.get("task_description")
         ei = tr.get("episode_idx")
-        if not (isinstance(td, str) and isinstance(ei, int)):
+        si = tr.get("seed", -1)
+        ri = tr.get("initial_state_idx", ei)
+        if not (
+            isinstance(td, str)
+            and isinstance(ei, int)
+            and isinstance(si, int)
+            and isinstance(ri, int)
+        ):
             continue
         if allowed_tasks is not None and td not in allowed_tasks:
             continue
-        rollout = rollout_index.get((td, ei))
+        rollout = rollout_index.get((td, si, ri))
         if rollout is None:
             continue
         label = _episode_label(rollout)

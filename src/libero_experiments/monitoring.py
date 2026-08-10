@@ -9,7 +9,7 @@ This module provides:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -220,8 +220,6 @@ class WarningController:
 
         Returns: (warning_active_now, triggered_now)
         """
-        triggered = False
-
         if self._cooldown_left > 0:
             self._cooldown_left -= 1
 
@@ -235,7 +233,6 @@ class WarningController:
             self._above = 0
 
         if self._cooldown_left == 0 and self._above >= max(1, self.patience):
-            triggered = True
             self.num_triggers += 1
             self._active_left = max(1, self.duration) - 1
             self._cooldown_left = max(0, self.cooldown)
@@ -261,6 +258,7 @@ class MonitorEpisodeLog:
     task_description: str
     episode_idx: int
     seed: int
+    initial_state_idx: Optional[int] = None
     perturbation: Optional[str] = None
     steps: List[MonitorLogStep] = field(default_factory=list)
     success: Optional[bool] = None
@@ -272,6 +270,7 @@ class MonitorEpisodeLog:
             "task_description": self.task_description,
             "episode_idx": self.episode_idx,
             "seed": self.seed,
+            "initial_state_idx": self.initial_state_idx,
             "perturbation": self.perturbation,
             "steps": [
                 {

@@ -54,6 +54,7 @@ from libero_experiments.monitoring import (
 )
 from libero_experiments.nearmiss import sample_nearmiss_variant
 from libero_experiments.perturbations import apply_visual_perturbation, make_step_rng
+from libero_experiments.reset_selection import resolve_initial_state_indices
 from libero_experiments.utils import (
     get_resize_size,
     invert_gripper_action,
@@ -211,6 +212,7 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
 
     nearmiss_specs_path = os.path.join(run_dir, "nearmiss_specs.jsonl")
     detector_events_path = os.path.join(run_dir, "detector_events.jsonl")
+    reset_manifest_path = os.path.join(run_dir, "reset_manifest.jsonl")
     actions_path = os.path.join(run_dir, "actions.json")
     monitor_log_path = os.path.join(run_dir, "monitor_rollouts.jsonl")
     trace_log_path = os.path.join(run_dir, "activation_traces.jsonl")
@@ -285,11 +287,28 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
     for task_id in tqdm.tqdm(task_ids):
         task = task_suite.get_task(task_id)
         initial_states = task_suite.get_task_init_states(task_id)
+        initial_state_indices = resolve_initial_state_indices(
+            available_count=len(initial_states),
+            num_trials=int(cfg.env.num_trials_per_task),
+            offset=int(cfg.env.initial_state_offset),
+            explicit_indices=cfg.env.initial_state_indices,
+        )
         base_env, base_task_description = get_libero_env(task, resolution=256)
+
+        manifest_row = {
+            "task_id": int(task_id),
+            "task_description": base_task_description,
+            "seed": int(cfg.env.seed),
+            "initial_state_indices": initial_state_indices,
+        }
+        with open(reset_manifest_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(manifest_row) + "\n")
+        print(f"Initial-state indices: {initial_state_indices}")
+        log_file.write(f"Initial-state indices: {initial_state_indices}\n")
 
         task_episodes, task_successes = 0, 0
 
-        for episode_idx in tqdm.tqdm(range(cfg.env.num_trials_per_task)):
+        for episode_idx, initial_state_idx in enumerate(tqdm.tqdm(initial_state_indices)):
             env = base_env
             task_description = base_task_description
             nearmiss_specs: dict = {}
@@ -311,7 +330,7 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
             log_file.write(f"\nTask: {task_description}\n")
 
             env.reset()
-            obs = env.set_init_state(initial_states[episode_idx])
+            obs = env.set_init_state(initial_states[initial_state_idx])
 
             t = 0
             replay_images = []
@@ -348,6 +367,7 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
                 task_description=task_description,
                 episode_idx=episode_idx,
                 seed=cfg.env.seed,
+                initial_state_idx=initial_state_idx,
                 perturbation=perturbation,
             )
 
@@ -554,6 +574,7 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
                 trace_rec = {
                     "task_description": task_description,
                     "episode_idx": episode_idx,
+                    "initial_state_idx": initial_state_idx,
                     "seed": cfg.env.seed,
                     "perturbation": perturbation,
                     "success": bool(done),
@@ -572,6 +593,7 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
                             {
                                 "task_id": int(task_id),
                                 "episode_idx": int(episode_idx),
+                                "initial_state_idx": int(initial_state_idx),
                                 "task_description": task_description,
                                 "specs": nearmiss_specs,
                             }
@@ -585,6 +607,7 @@ def eval_libero(cfg: RunConfig, intervention_config_path: str) -> EvalResult:
                             {
                                 "task_id": int(task_id),
                                 "episode_idx": int(episode_idx),
+                                "initial_state_idx": int(initial_state_idx),
                                 "success": bool(done),
                                 "failure_event": _failure_event_to_dict(failure_event),
                             }

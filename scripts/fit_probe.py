@@ -88,6 +88,7 @@ def _episode_key(row: dict) -> str:
         [
             _task_description(row),
             f"episode={row.get('episode_idx', 'unknown')}",
+            f"initial_state={row.get('initial_state_idx', row.get('episode_idx', 'unknown'))}",
             f"seed={row.get('seed', 'unknown')}",
             f"perturbation={perturbation_s}",
         ]

@@ -31,6 +31,8 @@ class EnvConfig:
     num_trials_per_task: int = 1
     seed: int = 7
     selected_task_ids: list[int] = field(default_factory=list)
+    initial_state_offset: int = 0
+    initial_state_indices: list[int] = field(default_factory=list)
 
 
 @dataclass
