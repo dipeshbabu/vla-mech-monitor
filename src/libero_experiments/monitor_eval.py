@@ -67,6 +67,11 @@ def _auc_pr(y_true: np.ndarray, y_score: np.ndarray) -> float:
 class Metrics:
     auroc: float
     auprc: float
+    positive_steps: int
+    negative_steps: int
+    positive_prevalence: float
+    scored_episodes: int
+    failure_episodes: int
     mean_lead: float
     intervention_rate: float
     warning_rate: float
@@ -120,6 +125,8 @@ def _compute_metrics_from_episodes(
     warning_total_steps = 0
     warning_triggers = 0
     episodes_with_steps = 0
+    scored_episodes = 0
+    failure_episodes = 0
 
     for ep in episodes:
         steps = ep.get("steps", [])
@@ -145,6 +152,10 @@ def _compute_metrics_from_episodes(
             should_score = True
 
         if should_score:
+            if failure_t is not None and success is not True:
+                failure_episodes += 1
+            if len(ts):
+                scored_episodes += 1
             if failure_t is None:
                 y = np.zeros_like(ts, dtype=np.int32)
             else:
@@ -167,6 +178,10 @@ def _compute_metrics_from_episodes(
     y_score = np.array(y_score_all, dtype=np.float32)
     y_true_base = np.array(y_true_baseline, dtype=np.int32)
     y_score_base = np.array(y_score_baseline, dtype=np.float32)
+    positive_steps = int((y_true == 1).sum())
+    negative_steps = int((y_true == 0).sum())
+    labeled_steps = positive_steps + negative_steps
+    positive_prevalence = positive_steps / labeled_steps if labeled_steps else float("nan")
 
     auroc = _auc_roc(y_true, y_score) if len(y_true) else float("nan")
     auprc = _auc_pr(y_true, y_score) if len(y_true) else float("nan")
@@ -178,6 +193,11 @@ def _compute_metrics_from_episodes(
     return Metrics(
         auroc=auroc,
         auprc=auprc,
+        positive_steps=positive_steps,
+        negative_steps=negative_steps,
+        positive_prevalence=positive_prevalence,
+        scored_episodes=scored_episodes,
+        failure_episodes=failure_episodes,
         mean_lead=mean_lead,
         intervention_rate=intervention_rate,
         warning_rate=warning_active_steps / max(warning_total_steps, 1),
@@ -303,6 +323,11 @@ def main() -> None:
         print("Evaluation scope: failure/timeout episodes only")
     print(f"AUROC (fail within K): {m.auroc:.4f}")
     print(f"AUPRC (fail within K): {m.auprc:.4f}")
+    print(f"Positive steps: {m.positive_steps}")
+    print(f"Negative steps: {m.negative_steps}")
+    print(f"Positive prevalence (random AUPRC baseline): {m.positive_prevalence:.6f}")
+    print(f"Scored episodes: {m.scored_episodes}")
+    print(f"Failed episodes: {m.failure_episodes}")
     print(f"Mean lead time (trigger -> fail): {m.mean_lead:.2f} steps")
     print(f"Intervention rate (non-zero coef): {m.intervention_rate:.4f}")
     print(f"Warning-active rate: {m.warning_rate:.4f}")
@@ -337,7 +362,9 @@ def main() -> None:
         )
         for failure_type, metrics in breakdown.items():
             print(
-                f"  {failure_type}: AUROC={metrics.auroc:.4f}, "
+                f"  {failure_type}: failures={metrics.failure_episodes}, "
+                f"positive_prevalence={metrics.positive_prevalence:.6f}, "
+                f"AUROC={metrics.auroc:.4f}, "
                 f"AUPRC={metrics.auprc:.4f}, mean_lead={metrics.mean_lead:.2f}"
             )
 

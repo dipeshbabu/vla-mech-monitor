@@ -818,13 +818,15 @@ This reports:
 
 - AUROC
 - AUPRC
+- positive and negative step counts, including positive prevalence as the random-ranking AUPRC baseline
+- scored-episode and failed-episode counts
 - mean lead time
 - intervention rate
 - warning-active rate
 - warning triggers per episode
 - optional uncertainty-baseline AUROC/AUPRC when `monitor.uncertainty_baseline` is enabled
 - optional episode-bootstrap intervals for AUROC, AUPRC, and mean lead time
-- optional metrics separated by recorded failure type
+- optional metrics and episode counts separated by recorded failure type
 - two evaluation scopes are available: failure/timeout only, or all episodes via `--include-success-episodes`
 
 ## Extra Utilities

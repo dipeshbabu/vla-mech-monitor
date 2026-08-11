@@ -47,6 +47,11 @@ def test_episode_bootstrap_and_failure_slices(tmp_path: Path) -> None:
     metrics = compute_metrics(log_path, k=1, include_success_episodes=True)
     assert metrics.auroc > 0.9
     assert metrics.auprc > 0.9
+    assert metrics.positive_steps == 4
+    assert metrics.negative_steps == 14
+    assert metrics.positive_prevalence == 4 / 18
+    assert metrics.scored_episodes == 3
+    assert metrics.failure_episodes == 2
 
     intervals = bootstrap_confidence_intervals(
         log_path,
@@ -61,3 +66,5 @@ def test_episode_bootstrap_and_failure_slices(tmp_path: Path) -> None:
     breakdown = compute_failure_type_metrics(log_path, k=1, include_success_episodes=True)
     assert set(breakdown) == {"drop", "timeout"}
     assert all(np.isfinite(item.auroc) for item in breakdown.values())
+    assert all(item.failure_episodes == 1 for item in breakdown.values())
+    assert all(item.scored_episodes == 2 for item in breakdown.values())
